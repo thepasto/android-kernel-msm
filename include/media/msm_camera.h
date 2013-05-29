@@ -338,7 +338,9 @@ struct outputCfg {
 #define OUTPUT_TYPE_V		4
 
 struct msm_frame {
+#ifndef CONFIG_MACH_ACER_A1
 	struct timespec ts;
+#endif
 	int path;
 	unsigned long buffer;
 	uint32_t y_off;
@@ -415,8 +417,15 @@ struct msm_snapshot_pp_status {
 #define CFG_GET_PICT_P_PL		25
 #define CFG_GET_AF_MAX_STEPS		26
 #define CFG_GET_PICT_MAX_EXP_LC		27
+
+#ifdef CONFIG_MACH_ACER_A1
+#define CFG_GET_WB_GAINS		28
+#define CFG_SEND_WB_INFO		29
+#define CFG_MAX				30
+#else
 #define CFG_SEND_WB_INFO    28
 #define CFG_MAX 			29
+#endif
 
 #define MOVE_NEAR	0
 #define MOVE_FAR	1

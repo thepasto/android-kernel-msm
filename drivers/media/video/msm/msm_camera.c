@@ -463,7 +463,9 @@ static int __msm_get_frame(struct msm_sync *sync,
 		goto err;
 	}
 
+#ifndef CONFIG_MACH_ACER_A1
 	frame->ts = qcmd->ts;
+#endif
 	frame->buffer = (unsigned long)pmem_info.vaddr;
 	frame->y_off = pmem_info.y_off;
 	frame->cbcr_off = pmem_info.cbcr_off;
