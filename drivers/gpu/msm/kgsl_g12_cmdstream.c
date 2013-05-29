@@ -26,23 +26,21 @@
 
 #include "kgsl.h"
 #include "kgsl_device.h"
-#include "kgsl_g12.h"
-#include "kgsl_g12_drawctxt.h"
 #include "kgsl_log.h"
 
 #include "g12_reg.h"
 
-int kgsl_g12_cmdstream_check_timestamp(struct kgsl_g12_device *g12_device,
+int kgsl_g12_cmdstream_check_timestamp(struct kgsl_device *device,
 					unsigned int timestamp)
 {
 	int ts_diff;
 
-	ts_diff = g12_device->timestamp - timestamp;
+	ts_diff = device->timestamp - timestamp;
 
 	return (ts_diff >= 0) || (ts_diff < -20000);
 }
 
-static int room_in_rb(struct kgsl_g12_device *device)
+static int room_in_rb(struct kgsl_device *device)
 {
 	int ts_diff;
 
@@ -74,11 +72,12 @@ static void addcmd(struct kgsl_g12_z1xx *z1xx, unsigned int index,
 }
 
 int
-kgsl_g12_cmdstream_issueibcmds(struct kgsl_device_private *dev_priv,
+kgsl_g12_cmdstream_issueibcmds(struct kgsl_device *device,
+			struct kgsl_pagetable *pagetable,
 			int drawctxt_index,
 			uint32_t ibaddr,
 			int sizedwords,
-			uint32_t *timestamp,
+			int *timestamp,
 			unsigned int ctrl)
 {
 	unsigned int result = 0;
@@ -89,9 +88,6 @@ kgsl_g12_cmdstream_issueibcmds(struct kgsl_device_private *dev_priv,
 	unsigned int nextcnt    = 0x9000 | 5;
 	struct kgsl_memdesc tmp = {0};
 	unsigned int cmd;
-	struct kgsl_device *device = dev_priv->device;
-	struct kgsl_pagetable *pagetable = dev_priv->process_priv->pagetable;
-	struct kgsl_g12_device *g12_device = (struct kgsl_g12_device *) device;
 
 	cmd = ibaddr;
 
@@ -105,11 +101,11 @@ kgsl_g12_cmdstream_issueibcmds(struct kgsl_device_private *dev_priv,
 		cnt = PACKETSIZE_STATESTREAM;
 		ofs = 0;
 	} else {
-		kgsl_g12_setstate(device, device->mmu.tlb_flags);
+		kgsl_setstate(device, device->mmu.tlb_flags);
 	}
 
-	result = wait_event_interruptible_timeout(g12_device->wait_timestamp_wq,
-				  room_in_rb(g12_device),
+	result = wait_event_interruptible_timeout(device->wait_timestamp_wq,
+				  room_in_rb(device),
 				  msecs_to_jiffies(KGSL_TIMEOUT_DEFAULT));
 	if (result < 0) {
 		KGSL_CMD_ERR("failed waiting for ringbuffer. result %d",
@@ -118,9 +114,9 @@ kgsl_g12_cmdstream_issueibcmds(struct kgsl_device_private *dev_priv,
 	}
 	result = 0;
 
-	index = g12_device->current_timestamp % KGSL_G12_PACKET_COUNT;
-	g12_device->current_timestamp++;
-	*timestamp = g12_device->current_timestamp;
+	index = device->current_timestamp % KGSL_G12_PACKET_COUNT;
+	device->current_timestamp++;
+	*timestamp = device->current_timestamp;
 
 	g_z1xx.prevctx = drawctxt_index;
 
@@ -142,15 +138,5 @@ kgsl_g12_cmdstream_issueibcmds(struct kgsl_device_private *dev_priv,
 				KGSL_CMDWINDOW_2D, ADDR_VGV3_CONTROL, 0);
 error:
 	return result;
-}
-
-unsigned int kgsl_g12_cmdstream_readtimestamp(struct kgsl_device *device,
-			     enum kgsl_timestamp_type type)
-{
-	struct kgsl_g12_device *g12_device;
-
-	g12_device = (struct kgsl_g12_device *) device;
-	/* get current EOP timestamp */
-	return g12_device->timestamp;
 }
 

@@ -18,7 +18,6 @@
 #include "kgsl.h"
 #include "kgsl_device.h"
 #include "kgsl_log.h"
-#include "kgsl_g12.h"
 
 #include "g12_reg.h"
 #include <linux/io.h>

@@ -22,7 +22,6 @@
 #include "kgsl_g12_drawctxt.h"
 #include "kgsl_sharedmem.h"
 #include "kgsl.h"
-#include "kgsl_g12.h"
 #include "kgsl_log.h"
 #include "kgsl_g12_cmdwindow.h"
 #include "kgsl_g12_vgv3types.h"
@@ -31,18 +30,17 @@
 struct kgsl_g12_z1xx g_z1xx = {0};
 
 int
-kgsl_g12_drawctxt_create(struct kgsl_device_private *dev_priv,
-			uint32_t unused,
+kgsl_g12_drawctxt_create(struct kgsl_device *device,
+			uint32_t ctxt_id_mask,
 			unsigned int *drawctxt_id)
 {
 	int cmd;
 	int result;
 	unsigned int ctx_id;
-	struct kgsl_device *device = dev_priv->device;
 
 	if (g_z1xx.numcontext == 0) {
-		if (kgsl_sharedmem_alloc_coherent(&g_z1xx.cmdbufdesc,
-						  KGSL_G12_RB_SIZE) !=  0)
+		if (kgsl_sharedmem_alloc(0, KGSL_G12_RB_SIZE,
+					&g_z1xx.cmdbufdesc) !=  0)
 			return -ENOMEM;
 
 		cmd = (int)(((VGV3_NEXTCMD_JUMP) &
@@ -68,7 +66,7 @@ kgsl_g12_drawctxt_create(struct kgsl_device_private *dev_priv,
 		if (result != 0)
 			return result;
 	}
-	ctx_id = ffz(dev_priv->ctxt_id_mask);
+	ctx_id = ffz(ctxt_id_mask);
 
 	g_z1xx.numcontext++;
 	if (g_z1xx.numcontext > KGSL_G12_CONTEXT_MAX) {
@@ -85,8 +83,6 @@ int
 kgsl_g12_drawctxt_destroy(struct kgsl_device *device,
 			unsigned int drawctxt_id)
 {
-	struct kgsl_g12_device *g12_device = (struct kgsl_g12_device *) device;
-
 	if (drawctxt_id >= KGSL_G12_CONTEXT_MAX)
 		return KGSL_FAILURE;
 
@@ -97,8 +93,8 @@ kgsl_g12_drawctxt_destroy(struct kgsl_device *device,
 	if (g_z1xx.numcontext == 0) {
 		kgsl_sharedmem_free(&g_z1xx.cmdbufdesc);
 		memset(&g_z1xx, 0, sizeof(struct kgsl_g12_z1xx));
-		g12_device->timestamp = 0;
-		g12_device->current_timestamp = 0;
+		device->timestamp = 0;
+		device->current_timestamp = 0;
 	}
 
 	return KGSL_SUCCESS;

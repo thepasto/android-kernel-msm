@@ -23,12 +23,10 @@
 #include "drm.h"
 #include <linux/android_pmem.h>
 
-#include "kgsl_drawctxt.h"
 #include "kgsl.h"
 #include "kgsl_device.h"
 #include "kgsl_drm.h"
 #include "kgsl_mmu.h"
-#include "kgsl_yamato.h"
 
 #define DRIVER_AUTHOR           "Qualcomm"
 #define DRIVER_NAME             "kgsl"
@@ -621,7 +619,6 @@ kgsl_gem_map(struct drm_gem_object *obj)
 	int index;
 	int ret = -EINVAL;
 	int flags = KGSL_MEMFLAGS_CONPHYS;
-	struct kgsl_device *yamato_device = kgsl_get_yamato_generic_device();
 
 	if (priv->flags & DRM_KGSL_GEM_FLAG_MAPPED)
 		return 0;
@@ -634,7 +631,8 @@ kgsl_gem_map(struct drm_gem_object *obj)
 	/* Get the global page table */
 
 	if (priv->pagetable == NULL) {
-		struct kgsl_mmu *mmu = kgsl_get_mmu(yamato_device);
+		struct kgsl_mmu *mmu =
+			kgsl_yamato_get_mmu(&kgsl_driver.yamato_device);
 
 		if (mmu == NULL || !kgsl_mmu_isenabled(mmu))
 			return -EINVAL;
