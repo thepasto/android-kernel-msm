@@ -261,6 +261,21 @@ config LEDS_PMIC8058
 	  (Power Management IC) chip on Qualcomm reference boards,
 	  for example SURF and FFAs.
 
+config LEDS_AVR
+	tristate "LED Support for Acer AVR device"
+	depends on LEDS_CLASS && AVR
+	help
+	  This option enables support for LEDs driven by Atmel AVR
+	  in Acer A1 devices.
+
+config LEDS_TCA6507
+	tristate "LED Support for TCA6507 I2C chip"
+	depends on LEDS_CLASS && I2C
+	help
+	  This option enables support for LEDs connected to TC6507
+	  LED driver chips accessed via the I2C bus.
+	  Driver support brightness control and hardware-assisted blinking.
+
 comment "LED Triggers"
 
 config LEDS_TRIGGERS
