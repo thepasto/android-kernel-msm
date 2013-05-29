@@ -61,4 +61,27 @@ config VP_A1026
 	help
 	  A1026 Voice Processor Driver implemented by HTC.
 
+config MS3C
+	tristate "Yamaha MS-3C e-compass support"
+	depends on I2C=y
+	default n
+	help
+	  If you say yes here you get support for Yamaha MS-3C.
+
+config BOSCH_SMB380
+	tristate "SMB380/BMA150 acceleration sensor support"
+	depends on I2C=y
+	default n
+	help
+	  If you say yes here you get support for Bosch Sensortec's
+	  acceleration sensors SMB380/BMA150.
+
+config SENSORS_ISL29018
+	tristate "ISL29018 light/proximity sensor support"
+	depends on I2C=y
+	default n
+	help
+	  If you say yes here you get support for Intersil's
+	  light/proximity sensor ISL29018.
+
 endmenu

@@ -17,6 +17,8 @@ obj-$(CONFIG_SENSORS_PCA963X)	+= pca963x.o
 obj-$(CONFIG_SENSORS_TSL2550)	+= tsl2550.o
 obj-$(CONFIG_SENSORS_MT9T013)	+= mt9t013.o
 obj-$(CONFIG_VP_A1026)		+= a1026.o
+obj-$(CONFIG_BOSCH_SMB380)	+= smb380.o bma150_driver.o smb380calib.o
+obj-$(CONFIG_SENSORS_ISL29018)  += isl29018.o
 
 ifeq ($(CONFIG_I2C_DEBUG_CHIP),y)
 EXTRA_CFLAGS += -DDEBUG
