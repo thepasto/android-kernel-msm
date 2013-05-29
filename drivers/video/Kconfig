@@ -2290,6 +2290,14 @@ choice
 	prompt "LCD Panel"
 	default FB_MSM_MDDI_AUTO_DETECT
 
+config FB_MSM_LCDC_AUO_WVGA
+	depends on FB_MSM_LCDC_HW
+	bool "LCDC Auo WVGA Panel"
+	select FB_MSM_LCDC_PANEL
+	default n
+	---help---
+	  Support for LCDC Auo WVGA (480x800) panel
+
 config FB_MSM_LCDC_PRISM_WVGA_PANEL
 	depends on FB_MSM_LCDC_HW
 	bool "LCDC Prism WVGA Panel"
