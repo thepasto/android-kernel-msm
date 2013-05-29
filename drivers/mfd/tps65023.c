@@ -33,6 +33,32 @@
 
 static struct i2c_client *tpsclient;
 
+#ifdef CONFIG_MACH_ACER_A1
+#define DCDC2_DISCHARGE		(0x1 << 2)
+#define DCDC1_DISCHARGE		(0x1 << 1)
+#define DCDC3_DISCHARGE		(0x1 << 0)
+
+static int tps65023_enable_discharge(void)
+{
+	int ret;
+	int val = 0;
+
+	val = i2c_smbus_read_byte_data(tpsclient, TPS65023_CON_CTRL2) & 0xF;
+	pr_info("%s: original CTRL2 = 0x%x\n", __func__, val);
+	val &= ~(DCDC1_DISCHARGE | DCDC2_DISCHARGE | DCDC3_DISCHARGE);
+	val |= (DCDC1_DISCHARGE | DCDC2_DISCHARGE);
+
+	ret = i2c_smbus_write_byte_data(tpsclient,
+                                TPS65023_CON_CTRL2, val);
+	if(ret) {
+		pr_err("%s: error set to tps65023\n", __func__);
+		return ret;
+	}
+	val = i2c_smbus_read_byte_data(tpsclient, TPS65023_CON_CTRL2) & 0xF;
+	pr_info("%s: after set CTRL2 = 0x%x\n", __func__, val);
+	return 0;
+}
+#endif
 int tps65023_set_dcdc1_level(int mvolts)
 {
 	int val;
@@ -86,6 +112,10 @@ static int tps65023_probe(struct i2c_client *client,
 	}
 
 	tpsclient = client;
+#ifdef CONFIG_MACH_ACER_A1
+	/* Enable Discharge */
+	tps65023_enable_discharge();
+#endif
 	printk(KERN_INFO "TPS65023: PMIC probed.\n");
 	return 0;
 }
