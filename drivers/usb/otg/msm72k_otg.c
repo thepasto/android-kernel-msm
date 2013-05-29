@@ -40,6 +40,31 @@
 #define USB_LINK_RESET_TIMEOUT	(msecs_to_jiffies(10))
 #define DRIVER_NAME	"msm_otg"
 
+#ifdef CONFIG_MACH_ACER_A1
+#ifdef CONFIG_HAS_EARLYSUSPEND
+#include <linux/earlysuspend.h>
+/*
+ * Workaround for USB plug in/out quickly problem
+ *
+ * When plug in/out the usb cable very quickly,
+ * sometimes the scheduled works have different order to execute.
+ * When this happened, A1 will not sleep all the time because USB hold the wake-lock.
+ * We add a check into early_suspend function to ensure the wake-lock is released
+ * before suspending if the usb cable is not attached.
+*/
+
+/* Definitions copy from kernel/wakelock.c */
+#define WAKE_LOCK_ACTIVE                 (1U << 9)
+#define WAKE_LOCK_AUTO_EXPIRE            (1U << 10)
+
+static struct early_suspend early_suspend;
+static void hsusb_early_suspend(struct early_suspend *h);
+static int not_done = 0;
+#endif // CONFIG_HAS_EARLYSUSPEND
+
+unsigned int redundant_usb_int = false;
+#endif // CONFIG_MACH_ACER_A1
+
 static void otg_reset(struct otg_transceiver *xceiv);
 static void msm_otg_set_vbus_state(int online);
 
@@ -245,6 +270,10 @@ static int msm_otg_suspend(struct msm_otg *dev)
 	unsigned otgsc;
 	enum chg_type curr_chg = atomic_read(&dev->chg_type);
 
+#ifdef CONFIG_MACH_ACER_A1
+	not_done = 0;
+#endif
+
 	disable_irq(dev->irq);
 	if (atomic_read(&dev->in_lpm))
 		goto out;
@@ -360,6 +389,10 @@ static int msm_otg_resume(struct msm_otg *dev)
 	atomic_set(&dev->in_lpm, 0);
 
 	pr_info("%s: usb exited from low power mode\n", __func__);
+
+#ifdef CONFIG_MACH_ACER_A1
+	not_done = 1;
+#endif
 
 	return 0;
 }
@@ -500,9 +533,20 @@ static irqreturn_t msm_otg_irq(int irq, void *data)
 	u32 otgsc = 0;
 
 	if (atomic_read(&dev->in_lpm)) {
+#ifdef CONFIG_MACH_ACER_A1
+		if (redundant_usb_int) {
+			pr_info("%s: drop redundant interrupt\n", __func__);
+			redundant_usb_int = 0;
+			return IRQ_HANDLED;
+		}
+#endif
 		msm_otg_resume(dev);
 		return IRQ_HANDLED;
 	}
+#ifdef CONFIG_MACH_ACER_A1
+	if (not_done)
+		not_done = 0;
+#endif
 
 	otgsc = readl(USB_OTGSC);
 	if (!(otgsc & OTGSC_INTR_STS_MASK))
@@ -964,6 +1008,13 @@ static int __init msm_otg_probe(struct platform_device *pdev)
 			goto free_otg_irq;
 		}
 	}
+
+#if defined(CONFIG_MACH_ACER_A1) && defined(CONFIG_HAS_EARLYSUSPEND)
+        early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB - 1;
+        early_suspend.suspend = hsusb_early_suspend;
+        register_early_suspend(&early_suspend);
+#endif
+
 #ifdef CONFIG_DEBUG_FS
 	ret = otg_debugfs_init(dev);
 	if (ret) {
@@ -1033,8 +1084,134 @@ static int __exit msm_otg_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_MACH_ACER_A1
+static int usb_platform_suspend(struct platform_device *pdev, pm_message_t state)
+{
+	struct msm_otg *dev = the_msm_otg;
+	u32 otgsc = 0;
+	unsigned temp;
+	unsigned long timeout;
+	pr_info("%s\n", __func__);
+
+	/* start to exit LPM for update register */
+	if (!atomic_read(&dev->in_lpm)){ /* we should be in LPM now! */
+		pr_err("%s: error!!!!!! Not in LPM\n", __func__);
+		return 0;
+	}
+
+	clk_enable(dev->hs_pclk);
+	if (dev->hs_cclk)
+		clk_enable(dev->hs_cclk);
+
+	temp = readl(USB_USBCMD);
+	temp &= ~ASYNC_INTR_CTRL;
+	temp &= ~ULPI_STP_CTRL;
+	writel(temp, USB_USBCMD);
+
+	if (device_may_wakeup(dev->otg.dev))
+		disable_irq_wake(dev->irq);
+
+	/* back to LPM */
+	disable_irq(dev->irq);
+
+	otg_reset(&dev->otg);
+
+	/* In case of fast plug-in and plug-out inside the otg_reset() the
+	 * servicing of BSV is missed (in the window of after phy and link
+	 * reset). Handle it if any missing bsv is detected */
+	if (is_b_sess_vld() && !is_host()) {
+		otgsc = readl(USB_OTGSC);
+		writel(otgsc, USB_OTGSC);
+		pr_info("%s:Process mising BSV\n", __func__);
+		msm_otg_start_peripheral(&dev->otg, 1);
+		enable_irq(dev->irq);
+		return -1;
+	}
+
+	ulpi_read(dev, 0x14);/* clear PHY interrupt latch register */
+	/* If there is no pmic notify support turn on phy comparators. */
+
+	ulpi_write(dev, 0x08, 0x09);/* turn off PLL on integrated phy */
+
+	timeout = jiffies + msecs_to_jiffies(500);
+	disable_phy_clk();
+	while (!is_phy_clk_disabled()) {
+		if (time_after(jiffies, timeout)) {
+			pr_err("%s: Unable to suspend phy\n", __func__);
+			otg_reset(&dev->otg);
+			goto out;
+		}
+		msleep(1);
+	}
+
+	writel(readl(USB_USBCMD) | ASYNC_INTR_CTRL | ULPI_STP_CTRL, USB_USBCMD);
+	clk_disable(dev->hs_pclk);
+	if (dev->hs_cclk)
+		clk_disable(dev->hs_cclk);
+	if (device_may_wakeup(dev->otg.dev))
+		enable_irq_wake(dev->irq);
+out:
+	enable_irq(dev->irq);
+
+	/* TBD: as there is no bus suspend implemented as of now
+	 * it should be dummy check
+	 */
+
+	pr_info("%s: done!\n", __func__);
+	return 0;
+}
+
+static int usb_platform_resume(struct platform_device *pdev)
+{
+	struct msm_otg *dev = the_msm_otg;
+	unsigned otgsc;
+
+	pr_info("%s!\n", __func__);
+	if(!dev){
+		pr_err("%s: error null dev!\n", __func__);
+		return -1;
+	}
+
+	otg_reset(&dev->otg);
+
+	/* In case of fast plug-in and plug-out inside the otg_reset() the
+	 * servicing of BSV is missed (in the window of after phy and link
+	 * reset). Handle it if any missing bsv is detected */
+	if (is_b_sess_vld() && !is_host()) {
+		otgsc = readl(USB_OTGSC);
+		writel(otgsc, USB_OTGSC);
+		pr_info("%s:Process mising BSV\n", __func__);
+		msm_otg_start_peripheral(&dev->otg, 1);
+		return -1;
+	}
+
+	if(not_done){
+		pr_info("usb: go back to lpm\n");
+		msm_otg_suspend(dev);
+	}
+	return 0;
+}
+
+#ifdef CONFIG_HAS_EARLYSUSPEND
+static void hsusb_early_suspend(struct early_suspend *h)
+{
+	struct msm_otg *dev = the_msm_otg;
+	pr_debug("%s: check\n", __func__);
+	if(not_done){
+		pr_info("%s: force goto suspend++\n", __func__);
+		msm_otg_suspend(dev);
+		pr_info("%s: force goto suspend--\n", __func__);
+	}
+}
+#endif
+#endif
+
 static struct platform_driver msm_otg_driver = {
 	.remove = __exit_p(msm_otg_remove),
+#ifdef CONFIG_MACH_ACER_A1
+	.suspend = usb_platform_suspend,
+	.resume = usb_platform_resume,
+#endif
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
