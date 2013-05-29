@@ -283,9 +283,19 @@ extern void mmc_power_restore_host(struct mmc_host *host);
 extern void mmc_detect_change(struct mmc_host *, unsigned long delay);
 extern void mmc_request_done(struct mmc_host *, struct mmc_request *);
 
+#ifdef CONFIG_MACH_ACER_A1
+extern unsigned int g_IsWifiModuleLoaded;
+#endif
+
 static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
 	host->ops->enable_sdio_irq(host, 0);
+#ifdef CONFIG_MACH_ACER_A1
+	if(atomic_read(&host->sdio_irq_thread_abort) == 1 || g_IsWifiModuleLoaded == 0) {
+		printk(KERN_INFO "%s: host->sdio_irq_thread should be invalid now....\n", mmc_hostname(host));
+		return;
+	}
+#endif
 	wake_up_process(host->sdio_irq_thread);
 }
 
