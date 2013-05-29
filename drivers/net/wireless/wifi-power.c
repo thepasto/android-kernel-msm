@@ -27,11 +27,16 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
+#include <linux/gpio.h>
+#include <mach/gpio.h>
 
 static int wifi_power_state;
 static int (*power_control)(int enable);
 
-int sdioh_mmc_irq = 0;
+/* These are used by bcm4329 */
+int sdioh_mmc_irq(int irq) {
+    return MSM_GPIO_TO_INT(irq);
+}
 EXPORT_SYMBOL(sdioh_mmc_irq);
 
 void bcm_wlan_power_on(int msec)
