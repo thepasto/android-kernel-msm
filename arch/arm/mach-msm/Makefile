@@ -42,6 +42,7 @@ $(obj)/smd_rpc_sym.c: $(src)/smd_rpc_sym $(src)/mkrpcsym.pl
 obj-$(CONFIG_ARCH_QSD8X50) += sirc.o
 obj-$(CONFIG_MSM_FIQ_SUPPORT) += fiq_glue.o
 obj-$(CONFIG_MACH_TROUT) += board-trout-rfkill.o
+obj-$(CONFIG_MACH_ACER_A1) += board-salsa.o
 obj-$(CONFIG_MSM_SDIO_AL) += sdio_al.o
 obj-$(CONFIG_MSM_SDIO_AL_TEST) += sdio_al_test.o
 obj-$(CONFIG_MSM_SMD) += smd.o smd_debug.o remote_spinlock.o socinfo.o
@@ -137,7 +138,6 @@ obj-$(CONFIG_MSM_NPA) += npa.o npa_resources.o msm_pm_qos.o msm_reqs.o
 obj-$(CONFIG_MSM_NPA_REMOTE) += npa_remote.o
 obj-$(CONFIG_MSM_NPA_REMOTE_ONCRPC) += npa_remote_rpc_client.o
 obj-$(CONFIG_ARCH_MSM7X30) += spm.o
-
 obj-$(CONFIG_SMMU)		+= smmu_driver.o smmu_driver_enum.o
 obj-$(CONFIG_SMMU_8X60)		+= board-msm8x60-smmu.o
 ifdef CONFIG_GPIOLIB
@@ -147,3 +147,8 @@ obj-$(CONFIG_MSM7200A_TLMM)	+= gpio.o generic_gpio.o
 endif
 obj-$(CONFIG_MSM7200A_TLMM)	+= tlmm-msm7200a.o
 obj-$(CONFIG_MSM8660_TLMM)	+= tlmm-msm8660.o msm8660-gpio.o
+
+obj-$(CONFIG_ACER_A1_GPIO_KEYPAD) += keypad-acer-a1.o
+obj-$(CONFIG_ACER_VIBRATOR) += acer_vibrator.o
+obj-$(CONFIG_ACER_HEADSET) += acer_headset.o
+obj-$(CONFIG_ACER_HEADSET_BUTT) += acer_headset_butt.o
