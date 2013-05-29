@@ -26,6 +26,9 @@
 #include "proc_comm.h"
 #include "smd_private.h"
 
+#ifdef CONFIG_MACH_ACER_A1
+#include <mach/smem_log.h>
+#endif
 #if defined(CONFIG_ARCH_MSM7X30)
 #define MSM_TRIG_A2M_PC_INT (writel(1 << 6, MSM_GCC_BASE + 0x8))
 #elif defined(CONFIG_ARCH_MSM8X60)
@@ -34,6 +37,9 @@
 #define MSM_TRIG_A2M_PC_INT (writel(1, MSM_CSR_BASE + 0x400 + (6) * 4))
 #endif
 
+#ifdef CONFIG_MACH_ACER_A1
+extern int smemlog_initialized;
+#endif
 static inline void notify_other_proc_comm(void)
 {
 	MSM_TRIG_A2M_PC_INT;
@@ -61,7 +67,35 @@ static DEFINE_SPINLOCK(proc_comm_lock);
  */
 static int proc_comm_wait_for(unsigned addr, unsigned value)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	unsigned int count = 0;
+	unsigned base = (unsigned)MSM_SHARED_RAM_BASE;
+#endif
 	while (1) {
+#ifdef CONFIG_MACH_ACER_A1
+		count++;
+		if(count == 2000)
+		{
+			//leave a smem log before modem watchdog timeout happened
+			unsigned cmd = readl(base + APP_COMMAND);
+			smem_log_event(SMEM_LOG_PROC_ID_APPS | SMEM_LOG_EVENT_READ, cmd, 0, 0);
+		}
+		else if(count >= 200000)
+		{
+			unsigned cmd = readl(base + APP_COMMAND);
+			unsigned data1 = readl(base + APP_DATA1);
+			unsigned data2 = readl(base + APP_DATA2);
+			printk(KERN_INFO "ERROR : proc_comm no response, try again\n");
+			printk(KERN_INFO "cmd = 0x%x\n", cmd);
+			printk(KERN_INFO "data1 = 0x%x\n", data1);
+			printk(KERN_INFO "data2 = 0x%x\n", data2);
+			printk(KERN_INFO "MDM_STATUS = 0x%x\n", readl(base + MDM_STATUS));
+			dump_stack();
+
+			smem_log_event(SMEM_LOG_PROC_ID_APPS | ERR_ERROR_FATAL, cmd, data1, data2);
+			return 1;
+		}
+#endif
 		if (readl(addr) == value)
 			return 0;
 

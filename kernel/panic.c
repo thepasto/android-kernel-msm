@@ -23,6 +23,12 @@
 #include <linux/nmi.h>
 #include <linux/dmi.h>
 
+#ifdef CONFIG_MACH_ACER_A1
+#include <asm/cacheflush.h>
+#include "../arch/arm/mach-msm/include/mach/shared_acer.h"
+#include "../arch/arm/mach-msm/proc_comm.h"
+#endif
+
 int panic_on_oops;
 static unsigned long tainted_mask;
 static int pause_on_oops;
@@ -61,6 +67,11 @@ NORET_TYPE void panic(const char * fmt, ...)
 	va_list args;
 	long i;
 
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_proc_cmd_type proc_comm_type;
+	int ret = 0;
+#endif
+
 	/*
 	 * It's possible to come here directly from a panic-assertion and
 	 * not have preempt disabled. Some functions called from here want
@@ -92,6 +103,17 @@ NORET_TYPE void panic(const char * fmt, ...)
 	smp_send_stop();
 
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
+
+#ifdef CONFIG_MACH_ACER_A1
+	flush_cache_all();
+	//instruct modem side to enter ram dump mode
+	proc_comm_type = ACER_SMEM_PROC_CMD_OS_RAM_DUMP;
+	ret = msm_proc_comm(PCOM_CUSTOMER_CMD1, &proc_comm_type, 0);
+	if(ret == -1)
+		pr_err("Entering ram dump mode error\n");
+	else
+		pr_info("Enter ram dump mode\n");
+#endif
 
 	bust_spinlocks(0);
 
