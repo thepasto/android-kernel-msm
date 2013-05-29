@@ -150,6 +150,9 @@ static struct attribute_group *msm_pm_mode_attr_group[MSM_PM_SLEEP_MODE_NR];
 static struct attribute **msm_pm_mode_attrs[MSM_PM_SLEEP_MODE_NR];
 static struct kobj_attribute *msm_pm_mode_kobj_attrs[MSM_PM_SLEEP_MODE_NR];
 
+#ifdef CONFIG_MACH_ACER_A1
+static acer_smem_flag_t *acer_smem_flag;
+#endif
 /*
  * Write out the attribute.
  */
@@ -1020,6 +1023,10 @@ static int msm_pm_power_collapse
 		goto power_collapse_early_exit;
 	}
 
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_flag->acer_os_pwr_state = (from_idle)?ACER_OS_IDLE_MODE:ACER_OS_SUSPEND_MODE;
+#endif
+
 	saved_vector[0] = msm_pm_reset_vector[0];
 	saved_vector[1] = msm_pm_reset_vector[1];
 	msm_pm_reset_vector[0] = 0xE51FF004; /* ldr pc, 4 */
@@ -1064,6 +1071,11 @@ static int msm_pm_power_collapse
 	MSM_PM_DPRINTK(MSM_PM_DEBUG_CLOCK, KERN_INFO,
 		"%s(): restore clock rate to %lu\n", __func__,
 		saved_acpuclk_rate);
+
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_flag->acer_os_pwr_state = ACER_OS_NORMAL_MODE;
+#endif
+
 	if (acpuclk_set_rate(smp_processor_id(), saved_acpuclk_rate,
 			SETRATE_PC) < 0)
 		printk(KERN_ERR "%s(): failed to restore clock rate(%lu)\n",
@@ -1685,8 +1697,29 @@ static void msm_pm_power_off(void)
 
 static void msm_pm_restart(char str, const char *cmd)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	unsigned id = 8;	//ACER_SMSM_PROC_CMD_SD_DOWNLOAD
+	unsigned id1 = 0;	//ACER_SDDL_ALL
+	unsigned id2 = 1;	//ACER_SDDL_AMSS_ONLY
+	unsigned id3 = 2;	//ACER_SDDL_OS_ONLY
+
+	msm_rpcrouter_close();
+	if (restart_reason==0x77665503) {
+		pr_debug(KERN_ERR "%s: update_all\n", __func__);
+		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id1);
+	} else if (restart_reason==0x77665504) {
+		pr_debug(KERN_ERR "%s: update_amss\n", __func__);
+		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id2);
+	} else if (restart_reason==0x77665505) {
+		pr_debug(KERN_ERR "%s: update_os\n", __func__);
+		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id3);
+	} else {
+		msm_proc_comm(PCOM_RESET_CHIP_IMM, &restart_reason, 0);
+	}
+#else
 	msm_rpcrouter_close();
 	msm_proc_comm(PCOM_RESET_CHIP, &restart_reason, 0);
+#endif
 
 	for (;;)
 		;
@@ -1701,6 +1734,14 @@ static int msm_reboot_call
 			restart_reason = 0x77665500;
 		} else if (!strcmp(cmd, "recovery")) {
 			restart_reason = 0x77665502;
+#ifdef CONFIG_MACH_ACER_A1
+		} else if (!strcmp(cmd, "update_all")) {
+			restart_reason = 0x77665503;
+		} else if (!strcmp(cmd, "update_amss")) {
+			restart_reason = 0x77665504;
+		} else if (!strcmp(cmd, "update_os")) {
+			restart_reason = 0x77665505;
+#endif
 		} else if (!strcmp(cmd, "eraseflash")) {
 			restart_reason = 0x776655EF;
 		} else if (!strncmp(cmd, "oem-", 4)) {
@@ -1735,6 +1776,11 @@ static int __init msm_pm_init(void)
 	struct proc_dir_entry *d_entry;
 #endif
 	int ret;
+
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_flag = smem_alloc(SMEM_ID_VENDOR0, sizeof(acer_smem_flag_t));
+	acer_smem_flag->acer_os_pwr_state = ACER_OS_NORMAL_MODE;
+#endif
 
 	pm_power_off = msm_pm_power_off;
 	arm_pm_restart = msm_pm_restart;
