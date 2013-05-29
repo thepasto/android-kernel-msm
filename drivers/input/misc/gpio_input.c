@@ -1,5 +1,3 @@
-#warning compile out
-#if 0
 /* drivers/input/misc/gpio_input.c
  *
  * Copyright (C) 2007 Google, Inc.
@@ -352,4 +350,3 @@ err_bad_keymap:
 err_ds_alloc_failed:
 	return ret;
 }
-#endif
