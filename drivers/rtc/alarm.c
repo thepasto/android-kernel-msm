@@ -32,6 +32,10 @@
 #define ANDROID_ALARM_PRINT_INT (1U << 5)
 #define ANDROID_ALARM_PRINT_FLOW (1U << 6)
 
+#ifdef CONFIG_MACH_ACER_A1
+static int alarm_driver_initialized = 0;
+#endif
+
 static int debug_mask = ANDROID_ALARM_PRINT_ERROR | \
 			ANDROID_ALARM_PRINT_INIT_STATUS;
 module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
@@ -302,6 +306,13 @@ alarm_update_timedelta(struct timespec tmp_time, struct timespec new_time)
 {
 	int i;
 	unsigned long flags;
+#ifdef CONFIG_MACH_ACER_A1
+	if (! alarm_driver_initialized) {
+		pr_alarm(ERROR, "alarm_update_timedelta: "
+			"Alarm driver is not yet initialized\n");
+		return;
+	}
+#endif
 
 	spin_lock_irqsave(&alarm_slock, flags);
 	for (i = 0; i < ANDROID_ALARM_SYSTEMTIME; i++) {
@@ -588,6 +599,9 @@ static int __init alarm_driver_init(void)
 	if (err < 0)
 		goto err2;
 
+#ifdef CONFIG_MACH_ACER_A1
+	alarm_driver_initialized = 1;
+#endif
 	return 0;
 
 err2:
