@@ -143,6 +143,8 @@ int msm_fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 static int msm_fb_resource_initialized;
 
 #ifndef CONFIG_FB_BACKLIGHT
+#ifndef CONFIG_MACH_ACER_A1
+/* Acer A1 uses AVR for brightness control */
 static int lcd_backlight_registered;
 
 static void msm_fb_set_bl_brightness(struct led_classdev *led_cdev,
@@ -170,6 +172,7 @@ static struct led_classdev backlight_led = {
 	.brightness	= MAX_BACKLIGHT_BRIGHTNESS,
 	.brightness_set	= msm_fb_set_bl_brightness,
 };
+#endif // !CONFIG_MACH_ACER_A1
 #endif
 
 static struct msm_fb_platform_data *msm_fb_pdata;
@@ -248,6 +251,7 @@ static int msm_fb_probe(struct platform_device *pdev)
 #ifdef CONFIG_FB_BACKLIGHT
 	msm_fb_config_backlight(mfd);
 #else
+#ifndef CONFIG_MACH_ACER_A1
 	/* android supports only one lcd-backlight/lcd for now */
 	if (!lcd_backlight_registered) {
 		if (led_classdev_register(&pdev->dev, &backlight_led))
@@ -255,6 +259,7 @@ static int msm_fb_probe(struct platform_device *pdev)
 		else
 			lcd_backlight_registered = 1;
 	}
+#endif // !CONFIG_MACH_ACER_A1
 #endif
 
 	pdev_list[pdev_list_cnt++] = pdev;
@@ -300,10 +305,12 @@ static int msm_fb_remove(struct platform_device *pdev)
 	/* remove /sys/class/backlight */
 	backlight_device_unregister(mfd->fbi->bl_dev);
 #else
+#ifndef CONFIG_MACH_ACER_A1
 	if (lcd_backlight_registered) {
 		lcd_backlight_registered = 0;
 		led_classdev_unregister(&backlight_led);
 	}
+#endif // !CONFIG_MACH_ACER_A1
 #endif
 
 #ifdef MSM_FB_ENABLE_DBGFS
@@ -470,6 +477,9 @@ static void msmfb_early_suspend(struct early_suspend *h)
 {
 	struct msm_fb_data_type *mfd = container_of(h, struct msm_fb_data_type,
 						    early_suspend);
+#ifdef CONFIG_MACH_ACER_A1
+	memset(mfd->fbi->screen_base, 0x0, mfd->fbi->fix.smem_len);
+#endif
 	msm_fb_suspend_sub(mfd);
 }
 
