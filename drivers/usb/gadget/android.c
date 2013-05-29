@@ -68,7 +68,11 @@ MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
 
 /* product id */
+#ifdef CONFIG_MACH_ACER_A1
+static u16 product_id = 0x3203;
+#else
 static u16 product_id;
+#endif
 static int android_set_pid(const char *val, struct kernel_param *kp);
 static int android_get_pid(char *buffer, struct kernel_param *kp);
 module_param_call(product_id, android_set_pid, android_get_pid,
@@ -318,6 +322,10 @@ static struct usb_configuration android_config_driver = {
 	.label		= "android",
 	.bind		= android_bind_config,
 	.bConfigurationValue = 1,
+#ifdef CONFIG_MACH_ACER_A1
+	.bmAttributes	= (USB_CONFIG_ATT_ONE | USB_CONFIG_ATT_SELFPOWER |
+				USB_CONFIG_ATT_WAKEUP),
+#endif
 	.bMaxPower	= 0xFA, /* 500ma */
 };
 
