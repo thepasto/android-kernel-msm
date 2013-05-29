@@ -52,6 +52,34 @@ struct q6_hw_info {
 
 /* TODO: provide mechanism to configure from board file */
 
+#ifdef CONFIG_MACH_ACER_A1
+static struct q6_hw_info q6_audio_hw[Q6_HW_COUNT] = {
+	[Q6_HW_HANDSET] = {
+		.min_gain = -700,
+		.max_gain = 1100,
+	},
+	[Q6_HW_HEADSET] = {
+		.min_gain = -1400,
+		.max_gain = 400,
+	},
+	[Q6_HW_SPEAKER] = {
+		.min_gain = -700,
+		.max_gain = 400,
+	},
+	[Q6_HW_TTY] = {
+		.min_gain = -1400,
+		.max_gain = 400,
+	},
+	[Q6_HW_BT_SCO] = {
+		.min_gain = -1400,
+		.max_gain = 400,
+	},
+	[Q6_HW_BT_A2DP] = {
+		.min_gain = -1400,
+		.max_gain = 400,
+	},
+};
+#else
 static struct q6_hw_info q6_audio_hw[Q6_HW_COUNT] = {
 	[Q6_HW_HANDSET] = {
 		.min_gain = -400,
@@ -78,6 +106,7 @@ static struct q6_hw_info q6_audio_hw[Q6_HW_COUNT] = {
 		.max_gain = 400,
 	},
 };
+#endif
 
 static struct wake_lock wakelock;
 static struct wake_lock idlelock;

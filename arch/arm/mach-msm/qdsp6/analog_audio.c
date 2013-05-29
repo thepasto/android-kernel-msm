@@ -19,14 +19,37 @@
 #include <mach/pmic.h>
 #include <mach/msm_qdsp6_audio.h>
 
-#define GPIO_HEADSET_AMP 157
+
+#ifdef CONFIG_MACH_ACER_A1
+# define GPIO_HEADSET_AMP 39
+#else
+# define GPIO_HEADSET_AMP 157
+#endif
+
+#ifdef CONFIG_AUDIO_TPA2018
+#include <mach/tpa2018.h>
+#endif
+#ifdef CONFIG_ACER_HEADSET
+#include <mach/acer_headset.h>
+#endif
+#ifdef CONFIG_AUDIO_FM2018
+#include <mach/fm2018.h>
+#endif
+#ifdef CONFIG_MACH_ACER_A1
+#include <mach/board.h>
+#endif
 
 void analog_init(void)
 {
 	/* stereo pmic init */
 	pmic_spkr_set_gain(LEFT_SPKR, SPKR_GAIN_PLUS12DB);
 	pmic_spkr_set_gain(RIGHT_SPKR, SPKR_GAIN_PLUS12DB);
+
+#ifdef CONFIG_MACH_ACER_A1
+	pmic_mic_set_volt(MIC_VOLT_2_00V);
+#else
 	pmic_mic_set_volt(MIC_VOLT_1_80V);
+#endif
 
 	gpio_direction_output(GPIO_HEADSET_AMP, 1);
 	gpio_set_value(GPIO_HEADSET_AMP, 0);
@@ -48,29 +71,56 @@ void analog_speaker_enable(int en)
 		scm.is_left_chan_en = 1;
 		scm.is_stereo_en = 1;
 		scm.is_hpf_en = 1;
+#ifndef CONFIG_MACH_ACER_A1
 		pmic_spkr_en_mute(LEFT_SPKR, 0);
 		pmic_spkr_en_mute(RIGHT_SPKR, 0);
 		pmic_set_spkr_configuration(&scm);
 		pmic_spkr_en(LEFT_SPKR, 1);
 		pmic_spkr_en(RIGHT_SPKR, 1);
+#endif
 		
+#ifdef CONFIG_AUDIO_TPA2018
+		set_adie_flag(1);
+		tpa2018_software_shutdown(0);
+#endif
+		pr_info("[Audio] Enable Speaker AMP \n");
 		/* unmute */
+#ifndef CONFIG_MACH_ACER_A1
 		pmic_spkr_en_mute(LEFT_SPKR, 1);
 		pmic_spkr_en_mute(RIGHT_SPKR, 1);
+#endif
 	} else {
+#ifndef CONFIG_MACH_ACER_A1
 		pmic_spkr_en_mute(LEFT_SPKR, 0);
 		pmic_spkr_en_mute(RIGHT_SPKR, 0);
 
 		pmic_spkr_en(LEFT_SPKR, 0);
 		pmic_spkr_en(RIGHT_SPKR, 0);
+#endif
+#ifdef CONFIG_AUDIO_TPA2018
+		set_adie_flag(0);
+		tpa2018_software_shutdown(1);
+#endif
+		pr_info("[Audio] Disable Speaker AMP \n");
+#ifndef CONFIG_MACH_ACER_A1
+		pmic_spkr_en(LEFT_SPKR, 0);
+		pmic_spkr_en(RIGHT_SPKR, 0);
 
 		pmic_set_spkr_configuration(&scm);
+#endif
 	}
 }
 
 void analog_mic_enable(int en)
 {
 	pmic_mic_en(en);
+#ifdef CONFIG_AUDIO_FM2018
+	if (hw_version <= 3) {
+		pr_debug("[Audio] Open fm2018 !!\n");
+		fm2018_set_pwd(en);
+		fm2018_set_procedure(1);
+	}
+#endif
 }
 
 static struct q6audio_analog_ops ops = {

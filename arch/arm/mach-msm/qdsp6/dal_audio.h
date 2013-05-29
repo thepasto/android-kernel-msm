@@ -589,6 +589,11 @@ struct adsp_buffer_event {
 #define ADSP_AUDIO_DEVICE_ID_I2S_SPKR				0x1089bf4
 #define ADSP_AUDIO_DEVICE_ID_NULL_SINK				0x108e512
 
+#ifdef CONFIG_MACH_ACER_A1
+#define ADSP_AUDIO_DEVICE_ID_HAC_HANDSET_SPKR	0x107ac88
+#define ADSP_AUDIO_DEVICE_ID_HAC_HANDSET_MIC	0x107ac8d
+#endif
+
 /* BT A2DP playback device. */
 /* This device must be paired with */
 /* ADSP_AUDIO_DEVICE_ID_MIXED_PCM_LOOPBACK_TX using  */
