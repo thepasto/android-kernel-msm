@@ -11,6 +11,7 @@ TARGET_PREBUILT_KERNEL := $(KERNEL_OUT)/piggy
 else
 TARGET_PREBUILT_KERNEL := $(TARGET_PREBUILT_INT_KERNEL)
 endif
+BCM_WIFI_PATH=drivers/net/wireless/bcm4329
 
 $(KERNEL_OUT):
 	mkdir -p $(KERNEL_OUT)
@@ -24,6 +25,8 @@ $(KERNEL_OUT)/piggy : $(TARGET_PREBUILT_INT_KERNEL)
 $(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_OUT) $(KERNEL_CONFIG)
 	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi-
 	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- modules
+	mkdir -p $(TARGET_OUT)/etc/wifi
+	$(ACP) $(KERNEL_OUT)/$(BCM_WIFI_PATH)/bcm4329.ko $(TARGET_OUT)/etc/wifi/dhd.ko
 
 kerneltags: $(KERNEL_OUT) $(KERNEL_CONFIG)
 	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- tags
