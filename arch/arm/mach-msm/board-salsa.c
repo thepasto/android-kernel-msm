@@ -226,13 +226,13 @@ static struct usb_composition usb_func_composition[] = {
 		.adb_product_id     = 0x3202,
 		.adb_functions	    = 0x27614
 	},
-#ifdef CONFIG_USB_ANDROID_CDC_ECM
+#ifdef CONFIG_USB_ANDROID_RNDIS
 	{
-		/* MSC + CDC-ECM */
+		/* RNDIS */
 		.product_id         = 0x3223,
-		.functions	    = 0x82,
+		.functions	    = 0x764A,
 		.adb_product_id     = 0x3222,
-		.adb_functions	    = 0x812,
+		.adb_functions	    = 0x7614A,
 	},
 #endif
 };
