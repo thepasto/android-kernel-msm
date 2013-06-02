@@ -2233,17 +2233,10 @@ dhd_detach(dhd_pub_t *dhdp)
 	}
 }
 
-#ifdef CONFIG_MACH_ACER_A1
-extern unsigned int g_IsWifiModuleLoaded;
-#endif
-
 static int __init
 dhd_module_init(void)
 {
 	int error;
-#ifdef CONFIG_MACH_ACER_A1
-	g_IsWifiModuleLoaded = 1;
-#endif
 
 	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
 
@@ -2326,9 +2319,6 @@ static void __exit
 dhd_module_cleanup(void)
 {
 	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
-#ifdef CONFIG_MACH_ACER_A1
-	g_IsWifiModuleLoaded = 0;
-#endif
 
 	dhd_bus_unregister();
 #if defined(CUSTOMER_HW2) && defined(CONFIG_WIFI_CONTROL_FUNC)
