@@ -1,10 +1,8 @@
-/* linux/drivers/wifi/wifi-power.c
+/* arch/arm/mach-msm/board-salsa-wifi-power.c
  *
- * wifi Power Switch Module
- * controls power to external wifi device
- * with interface to power management device
+ * WiFi Power Switch Module
+ * Controls power to external MMC WiFi device
  *
-
  * All source code in this file is licensed under the following license
  *
  * This program is free software; you can redistribute it and/or
@@ -27,65 +25,63 @@
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
-#include <linux/gpio.h>
-#include <mach/gpio.h>
+#include "board-salsa.h"
 
-static int wifi_power_state;
-static int (*power_control)(int enable);
+/*
+ * See arch/arm/mach-msm/board-salsa.c
+ */
+static int salsa_wifi_power_state;
+static int (*power_control)(int enable, int source);
 
 /* These are used by bcm4329 */
-int sdioh_mmc_irq(int irq) {
-    return MSM_GPIO_TO_INT(irq);
-}
-EXPORT_SYMBOL(sdioh_mmc_irq);
-
-void bcm_wlan_power_on(int msec)
+void bcm_wlan_power_on(int flag)
 {
 	if (power_control) {
-		(*power_control)(1);
-		udelay(msec);
+		(*power_control)(1, SALSA_WIFI_POWER_CALL_MODULE);
+		salsa_wifi_power_state = 0;
 	}
 }
 EXPORT_SYMBOL(bcm_wlan_power_on);
 
-void bcm_wlan_power_off(int msec)
+void bcm_wlan_power_off(int flag)
 {
 	if (power_control) {
-		(*power_control)(0);
-		udelay(msec);
+		(*power_control)(0, SALSA_WIFI_POWER_CALL_MODULE);
+		salsa_wifi_power_state = 0;
 	}
 }
 EXPORT_SYMBOL(bcm_wlan_power_off);
 
+/* This is called from userspace by netd */
 static int wifi_power_param_set(const char *val, struct kernel_param *kp)
 {
 	int ret;
 
-	pr_debug(
-		"%s: previous wifi_power_state=%d\n",
-		__func__, wifi_power_state);
+	pr_info("%s: previous salsa_wifi_power_state=%d\n",
+		 __func__, salsa_wifi_power_state);
 
-	/* lock change of state and reference */
+	/* Store the value */
 	ret = param_set_bool(val, kp);
-	if (power_control) {
-		if (!ret)
-			ret = (*power_control)(wifi_power_state);
-		else
-			pr_err("%s param set bool failed (%d)\n",
-					__func__, ret);
-	} else {
-		pr_info(
-			"%s: deferring power switch until probe\n",
-			__func__);
+	if (! power_control) {
+		pr_info("%s: no power control yet\n", __func__);
+		goto out;
 	}
+
+	if (!ret)
+		ret = (*power_control)(salsa_wifi_power_state,
+				       SALSA_WIFI_POWER_CALL_USERSPACE);
+	else
+		pr_err("%s param set bool failed (%d)\n",
+				__func__, ret);
 	pr_info(
 		"%s: current wifi_power_state=%d\n",
-		__func__, wifi_power_state);
+		__func__, salsa_wifi_power_state);
+out:
 	return ret;
 }
 
 module_param_call(power, wifi_power_param_set, param_get_bool,
-		  &wifi_power_state, S_IWUSR | S_IRUGO);
+		  &salsa_wifi_power_state, S_IWUSR | S_IRUGO);
 
 static int __init_or_module wifi_power_probe(struct platform_device *pdev)
 {
@@ -101,12 +97,8 @@ static int __init_or_module wifi_power_probe(struct platform_device *pdev)
 
 	power_control = pdev->dev.platform_data;
 
-	if (wifi_power_state) {
-		pr_info(
-			"%s: handling deferred power switch\n",
-			__func__);
-	}
-	ret = (*power_control)(wifi_power_state);
+	ret = (*power_control)(salsa_wifi_power_state,
+			       SALSA_WIFI_POWER_CALL_USERSPACE);
 	return ret;
 }
 
@@ -120,8 +112,9 @@ static int wifi_power_remove(struct platform_device *pdev)
 				__func__);
 		return -ENOSYS;
 	}
-	wifi_power_state = 0;
-	ret = (*power_control)(wifi_power_state);
+	salsa_wifi_power_state = 0;
+	ret = (*power_control)(salsa_wifi_power_state,
+			       SALSA_WIFI_POWER_CALL_USERSPACE);
 	power_control = NULL;
 
 	return ret;
@@ -138,21 +131,17 @@ static struct platform_driver wifi_power_driver = {
 
 static int __init_or_module wifi_power_init(void)
 {
-	int ret;
-
-	pr_debug( "%s\n", __func__);
-	ret = platform_driver_register(&wifi_power_driver);
-	return ret;
+	return platform_driver_register(&wifi_power_driver);
 }
 
 static void __exit wifi_power_exit(void)
 {
-	pr_debug( "%s\n", __func__);
 	platform_driver_unregister(&wifi_power_driver);
 }
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Craig A1");
+MODULE_AUTHOR("Roman Yepishev");
 MODULE_DESCRIPTION("wifi power control driver");
 MODULE_VERSION("1.00");
 MODULE_PARM_DESC(power, "A1 wifi power switch (bool): 0,1=off,on");
