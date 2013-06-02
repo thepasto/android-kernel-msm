@@ -95,7 +95,7 @@
 #include <mach/msm_spi.h>
 #include <mach/msm_tsif.h>
 #include <mach/msm_battery.h>
-
+#include "board-salsa.h"
 
 #if defined(CONFIG_ACER_HEADSET_BUTT)
 #include <mach/acer_headset_butt.h>
@@ -147,22 +147,18 @@
 
 static DEFINE_MUTEX(wifibtmutex);
 
-#if defined(CONFIG_MMC_WIFI)
 #define WL_PWR_EN	109
 #define WL_RST		147
 
 static int wifi_status_register(void (*callback)(int card_present, void *dev_id), void *dev_id);
 int wifi_set_carddetect(int val);
-#endif
 
-#if (defined(CONFIG_MMC_WIFI) || defined(CONFIG_BT))
 #define BT_GPIO_RESET	31
 #define BT_GPIO_POWER	106
 #define BT_GPIO_RX	139
 #define BT_GPIO_TX	140
 #define BT_GPIO_CTS	141
 #define BT_GPIO_RFR	157
-#endif
 
 #define PMIC_VREG_WLAN_LEVEL	2600
 #define PMIC_VREG_GP6_LEVEL	2900
@@ -764,7 +760,6 @@ exit:
 #define bt_power_init(x) do {} while (0)
 #endif //def CONFIG_BT
 
-#if defined(CONFIG_MMC_WIFI)
 static struct embedded_sdio_data bcm_wifi_emb_data = {
     .cis = {
         .max_dtr = 25000000,
@@ -774,39 +769,49 @@ static struct embedded_sdio_data bcm_wifi_emb_data = {
     },
 };
 
-static int wifi_power(int on)
+/*
+ * This is called via wifi-power.c module by userspace and the driver
+ *
+ * HACK:
+ * Firmware reload breaks if wifi_set_carddetect is called when power is being
+ * switched by the module.
+ *
+ * If the parameter is set in wifi-power.c the flag will be 0.
+ */
+static int salsa_wifi_power(int on, int source)
 {
 	int bt_on = 0;
-	pr_debug("%s\n", __func__);
 
 	//In order to follow wifi power sequence, we have to detect bt power status
 	mutex_lock(&wifibtmutex);
 	if (on) {
-		bt_on=gpio_get_value(106);
-		if (!bt_on){
-			//if WLAN on and BT off
+		bt_on = gpio_get_value(BT_GPIO_POWER);
+		if (!bt_on) {
+			/* if WLAN on and BT off */
 			gpio_set_value(WL_PWR_EN, 1);
 			gpio_set_value(BT_GPIO_POWER, 1);
 			msleep(100);
 			gpio_set_value(WL_RST, 1);
 			gpio_set_value(BT_GPIO_RESET, 1);
-			msleep(100);//at last 100 ms
+			msleep(100);
 			gpio_set_value(BT_GPIO_RESET, 0);
 			gpio_set_value(BT_GPIO_POWER, 0);
 		} else {
-			//if WLAN on and BT on
+			/* if WLAN on and BT on */
 			gpio_set_value(WL_PWR_EN, 1);
 			msleep(100);
 			gpio_set_value(WL_RST, 1);
 		}
-		wifi_set_carddetect(1);
-		pr_info("Wifi Power ON\n");
+		if (source == SALSA_WIFI_POWER_CALL_USERSPACE)
+			wifi_set_carddetect(1);
+		pr_info("%s: Wifi Power ON\n", __func__);
 	} else {
 		gpio_set_value(WL_PWR_EN, 0);
 		msleep(100);
 		gpio_set_value(WL_RST, 0);
-		wifi_set_carddetect(0);
-		pr_info("Wifi Power OFF\n");
+		if (source == SALSA_WIFI_POWER_CALL_USERSPACE)
+			wifi_set_carddetect(0);
+		pr_info("%s: Wifi Power OFF\n", __func__);
 	}
 	mutex_unlock(&wifibtmutex);
 	return 0;
@@ -815,7 +820,7 @@ static int wifi_power(int on)
 static struct platform_device msm_wifi_power_device = {
 	.name = "wifi_power",
 	.dev = {
-		.platform_data = wifi_power,
+		.platform_data = salsa_wifi_power,
 	}
 };
 
@@ -843,8 +848,6 @@ int wifi_set_carddetect(int val)
 	return 0;
 }
 EXPORT_SYMBOL(wifi_set_carddetect);
-
-#endif//def CONFIG_MMC_WIFI
 
 static void __init wlan_init(void)
 {
@@ -1234,9 +1237,7 @@ static struct platform_device *devices[] __initdata = {
 #ifdef CONFIG_BT
 	&msm_bt_power_device,
 #endif
-#if defined(CONFIG_MMC_WIFI)
 	&msm_wifi_power_device,
-#endif
 	&msm_device_uart3,
 	&msm_device_kgsl,
 #ifdef CONFIG_MT9P012
@@ -1512,7 +1513,6 @@ static struct mmc_platform_data qsd8x50_sdc1_data = {
 };
 #endif
 
-#if defined(CONFIG_MMC_WIFI)
 static struct mmc_platform_data qsd8x50_sdcc2_wifi = {
 	.ocr_mask = MMC_VDD_27_28 | MMC_VDD_28_29,
 	.translate_vdd = msm_sdcc_setup_power,
@@ -1524,7 +1524,6 @@ static struct mmc_platform_data qsd8x50_sdcc2_wifi = {
 	.msmsdcc_fmax	= 45000000,
 	.nonremovable	= 1,
 };
-#endif
 
 static void __init qsd8x50_init_mmc(void)
 {
@@ -1541,7 +1540,7 @@ static void __init qsd8x50_init_mmc(void)
 	msm_add_sdcc(1, &qsd8x50_sdc1_data);
 #endif
 
-#if defined(CONFIG_MMC_MSM_SDC2_SUPPORT) && defined(CONFIG_MMC_WIFI)
+#if defined(CONFIG_MMC_MSM_SDC2_SUPPORT)
 	msm_add_sdcc(2, &qsd8x50_sdcc2_wifi);
 #endif
 }
