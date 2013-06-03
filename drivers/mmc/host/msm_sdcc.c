@@ -15,9 +15,6 @@
  *
  */
 
-#if defined (CONFIG_ACER_DEBUG)
-#define DEBUG
-#endif
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
@@ -51,7 +48,9 @@
 #include <mach/clk.h>
 #include <mach/dma.h>
 #include <mach/htc_pwrsink.h>
+#ifdef CONFIG_MACH_ACER_A1
 #include <mach/gpio.h>
+#endif
 
 
 #include "msm_sdcc.h"
@@ -76,11 +75,6 @@ static int msmsdcc_auto_suspend(struct mmc_host *, int);
 
 static unsigned int msmsdcc_pwrsave = 1;
 #if defined (CONFIG_MACH_ACER_A1)
-unsigned int g_IS_SD_CMD25 = 0;
-unsigned int g_IsWifiModuleLoaded = 0;
-EXPORT_SYMBOL(g_IS_SD_CMD25);
-EXPORT_SYMBOL(g_IsWifiModuleLoaded);
-
 #define SDCC1_DATA_0	54
 #endif
 
@@ -336,16 +330,19 @@ msmsdcc_dma_complete_tlet(unsigned long data)
 #endif
 			mmc_request_done(host->mmc, mrq);
 			return;
-		} else {
+		} else
 #if defined (CONFIG_MACH_ACER_A1)
+		{
 			while ((host->pdev_id == 1) &&
 				(mrq->data->flags & MMC_DATA_WRITE) &&
 				(gpio_get_value(SDCC1_DATA_0) == 0)) {
 				udelay(5);
 			}
-#endif
 			msmsdcc_start_command(host, mrq->data->stop, 0);
 		}
+#else
+			msmsdcc_start_command(host, mrq->data->stop, 0);
+#endif
 	}
 
 out:
@@ -626,11 +623,6 @@ msmsdcc_start_command(struct msmsdcc_host *host, struct mmc_command *cmd, u32 c)
 {
 	msmsdcc_start_command_deferred(host, cmd, &c);
 	msmsdcc_start_command_exec(host, cmd->arg, c);
-
-#if defined (CONFIG_MACH_ACER_A1)
-	if (cmd->opcode == 12)
-		g_IS_SD_CMD25 = 0;
-#endif
 }
 
 static void
@@ -1029,10 +1021,6 @@ msmsdcc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	WARN_ON(host->curr.mrq != NULL);
 
         WARN_ON(host->pwr == 0);
-#if defined (CONFIG_MACH_ACER_A1)
-	if (mrq->cmd->opcode == 25)
-		g_IS_SD_CMD25 = 1;
-#endif
 
 	spin_lock_irqsave(&host->lock, flags);
 
