@@ -19,9 +19,12 @@
 #include <mach/pmic.h>
 #include <mach/msm_qdsp6_audio.h>
 
+#ifdef CONFIG_MACH_ACER_A1
+#include "../board-salsa.h"
+#endif
 
 #ifdef CONFIG_MACH_ACER_A1
-# define GPIO_HEADSET_AMP 39
+# define GPIO_HEADSET_AMP SALSA_GPIO_HS_AMP_EN
 #else
 # define GPIO_HEADSET_AMP 157
 #endif
@@ -31,12 +34,6 @@
 #endif
 #ifdef CONFIG_ACER_HEADSET
 #include <mach/acer_headset.h>
-#endif
-#ifdef CONFIG_AUDIO_FM2018
-#include <mach/fm2018.h>
-#endif
-#ifdef CONFIG_MACH_ACER_A1
-#include <mach/board.h>
 #endif
 
 void analog_init(void)
@@ -114,13 +111,6 @@ void analog_speaker_enable(int en)
 void analog_mic_enable(int en)
 {
 	pmic_mic_en(en);
-#ifdef CONFIG_AUDIO_FM2018
-	if (hw_version <= 3) {
-		pr_debug("[Audio] Open fm2018 !!\n");
-		fm2018_set_pwd(en);
-		fm2018_set_procedure(1);
-	}
-#endif
 }
 
 static struct q6audio_analog_ops ops = {

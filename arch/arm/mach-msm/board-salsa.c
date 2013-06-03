@@ -147,18 +147,9 @@
 
 static DEFINE_MUTEX(wifibtmutex);
 
-#define WL_PWR_EN	109
-#define WL_RST		147
 
 static int wifi_status_register(void (*callback)(int card_present, void *dev_id), void *dev_id);
 int wifi_set_carddetect(int val);
-
-#define BT_GPIO_RESET	31
-#define BT_GPIO_POWER	106
-#define BT_GPIO_RX	139
-#define BT_GPIO_TX	140
-#define BT_GPIO_CTS	141
-#define BT_GPIO_RFR	157
 
 #define PMIC_VREG_WLAN_LEVEL	2600
 #define PMIC_VREG_GP6_LEVEL	2900
@@ -363,9 +354,9 @@ static struct auo_platform_data auo_ts_data ={
 
 #if defined(CONFIG_ACER_HEADSET_BUTT)
 static struct hs_butt_gpio hs_butt_data = {
-	.gpio_hs_butt = 102,
-	.gpio_hs_dett = 151,
-	.gpio_hs_mic  = 152,
+	.gpio_hs_butt = SALSA_GPIO_HS_BUTT,
+	.gpio_hs_dett = SALSA_GPIO_HS_DET,
+	.gpio_hs_mic  = SALSA_GPIO_HS_MIC_BIAS_EN,
 };
 
 static struct platform_device hs_butt_device = {
@@ -537,8 +528,6 @@ static struct platform_device msm_audio_device = {
 };
 
 #ifdef CONFIG_AVR
-#define AVR_GPIO_EN	27
-#define AVR_IRQ_GPIO	145
 static struct mfd_cell avr_subdevs[] = {
 	{
 		.name	= "avr-keypad",
@@ -550,8 +539,8 @@ static struct mfd_cell avr_subdevs[] = {
 
 static void avr_gpio_release(void)
 {
-	gpio_free(AVR_IRQ_GPIO);
-	gpio_free(AVR_GPIO_EN);
+	gpio_free(SALSA_GPIO_AVR_IRQ);
+	gpio_free(SALSA_GPIO_AVR_EN);
 }
 
 static int avr_gpio_init(void)
@@ -559,25 +548,23 @@ static int avr_gpio_init(void)
 	/* The H/W configuration setting for A1 v0.2 */
 	int rc;
 
-	rc = gpio_request(AVR_GPIO_EN, "gpio_avr_en");
+	rc = gpio_request(SALSA_GPIO_AVR_EN, "gpio_avr_en");
 	if (rc) {
-		pr_err("gpio_request failed on pin %d (rc=%d)\n", AVR_GPIO_EN, rc);
+		pr_err("gpio_request failed on pin %d\n", SALSA_GPIO_AVR_EN);
 		goto err_gpioconfig;
 	}
 
-	/*
-	rc = gpio_request(AVR_IRQ_GPIO, "gpio_avr_irq");
+	rc = gpio_request(SALSA_GPIO_AVR_IRQ, "gpio_avr_irq");
 	if (rc) {
-		pr_err("gpio_request failed on pin %d (rc=%d)\n", AVR_IRQ_GPIO, rc);
+		pr_err("gpio_request failed on pin %d\n", SALSA_GPIO_AVR_IRQ);
 		goto err_gpioconfig;
 	}
-	*/
 
 	/* Set avr_en_pin as output high */
-	gpio_direction_output(AVR_GPIO_EN, 1);
+	gpio_direction_output(SALSA_GPIO_AVR_EN, 1);
 	mdelay(100);
 
-	if (gpio_get_value(AVR_GPIO_EN) != 1)
+	if (gpio_get_value(SALSA_GPIO_AVR_EN) != 1)
 		return -1;
 
 	return rc;
@@ -594,11 +581,9 @@ static struct avr_platform_data avr_pdata = {
 #endif // CONFIG_AVR
 
 #if defined(CONFIG_MS3C)
-#define MS3C_GPIO_RESET	23
-#define MS3C_GPIO_POWER	117
 static void __init compass_gpio_init(void)
 {
-	int rc = gpio_request(MS3C_GPIO_RESET, "CP_RST");
+	int rc = gpio_request(SALSA_GPIO_MS3C_RST, "CP_RST");
 	int powered_on = 0;
 
 	if (rc) {
@@ -606,24 +591,25 @@ static void __init compass_gpio_init(void)
 		return ;
 	}
 
-	gpio_set_value(MS3C_GPIO_RESET, 0);
+	gpio_set_value(SALSA_GPIO_MS3C_RST, 0);
 	mdelay(100);
-	gpio_set_value(MS3C_GPIO_RESET, 1);
+	gpio_set_value(SALSA_GPIO_MS3C_RST, 1);
 
 	if (hw_version >= 3){
-		rc = gpio_request(MS3C_GPIO_POWER, "CP_PWR");
+		rc = gpio_request(SALSA_GPIO_MS3C_PWR_EN, "CP_PWR");
 		if (rc) {
 			pr_err("Yamaha MS-3C gpio_request failed\n");
 			goto err_power;
 		}
-		rc = GPIO_CFG(MS3C_GPIO_POWER, 1, GPIO_OUTPUT, GPIO_PULL_UP, GPIO_2MA);
-		gpio_set_value(MS3C_GPIO_POWER, 1);
-		powered_on = gpio_get_value(MS3C_GPIO_POWER);
+		rc = GPIO_CFG(SALSA_GPIO_MS3C_PWR_EN, 1, GPIO_OUTPUT,
+			      GPIO_PULL_UP, GPIO_2MA);
+		gpio_set_value(SALSA_GPIO_MS3C_PWR_EN, 1);
+		powered_on = gpio_get_value(SALSA_GPIO_MS3C_PWR_EN);
 	} else {
 		powered_on = 1;
 	}
 
-	if(gpio_get_value(MS3C_GPIO_RESET) != 1 || !powered_on){
+	if(gpio_get_value(SALSA_GPIO_MS3C_PWR_EN) != 1 || !powered_on){
 		pr_err("Yamaha MS-3C gpio init failed!\n");
 		goto err_init;
 	}
@@ -632,9 +618,9 @@ static void __init compass_gpio_init(void)
 	return;
 
 err_init:
-	gpio_free(MS3C_GPIO_POWER);
+	gpio_free(SALSA_GPIO_MS3C_PWR_EN);
 err_power:
-	gpio_free(MS3C_GPIO_RESET);
+	gpio_free(SALSA_GPIO_MS3C_RST);
 }
 #endif //defined(CONFIG_MS3C)
 
@@ -671,18 +657,6 @@ static struct platform_device msm_bt_power_device = {
 	.name = "bt_power",
 };
 
-enum {
-	BT_SYSRST,
-	BT_WAKE,
-	BT_HOST_WAKE,
-	BT_VDD_IO,
-	BT_RFR,
-	BT_CTS,
-	BT_RX,
-	BT_TX,
-	BT_VDD_FREG
-};
-
 static struct msm_gpio bt_config_power_on[] = {
 	{ GPIO_CFG(31, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),
 		"BT SYSRST" },
@@ -706,27 +680,26 @@ static int bluetooth_power(int on)
 {
 	mutex_lock(&wifibtmutex);
 	if (on) {
-		gpio_set_value(BT_GPIO_POWER, on);
+		gpio_set_value(SALSA_GPIO_BT_PWR_EN, on);
 		msleep(100);
-		gpio_set_value(BT_GPIO_RESET, on);
+		gpio_set_value(SALSA_GPIO_BT_RST, on);
 	} else {
-		gpio_set_value(BT_GPIO_POWER, 0);
+		gpio_set_value(SALSA_GPIO_BT_PWR_EN, 0);
 		msleep(100);
-		gpio_set_value(BT_GPIO_RESET, 0);
+		gpio_set_value(SALSA_GPIO_BT_RST, 0);
 	}
 	mutex_unlock(&wifibtmutex);
 
 	printk(KERN_DEBUG "Bluetooth power switch: %d\n", on);
 
 	return 0;
-
 }
 
 static void __init bt_power_init(void)
 {
 	int rc;
 
-	rc = msm_gpios_enable(bt_config_power_on,
+	rc = msm_gpios_request_enable(bt_config_power_on,
 			ARRAY_SIZE(bt_config_power_on));
 	if (rc < 0) {
 		printk(KERN_ERR
@@ -734,19 +707,6 @@ static void __init bt_power_init(void)
 				__func__, rc);
 		goto exit;
 	}
-
-	if (gpio_request(BT_GPIO_RESET, "bt_reset"))
-		pr_err("failed to request gpio bt_reset\n");
-	if (gpio_request(BT_GPIO_POWER, "bt_power_enable"))
-		pr_err("failed to request gpio bt_power_enable\n");
-	if (gpio_request(BT_GPIO_RFR, "bt_rfr"))
-		pr_err("failed to request gpio bt_rfr\n");
-	if (gpio_request(BT_GPIO_CTS, "bt_cts"))
-		pr_err("failed to request gpio bt_cts\n");
-	if (gpio_request(BT_GPIO_RX, "bt_rx"))
-		pr_err("failed to request gpio bt_rx\n");
-	if (gpio_request(BT_GPIO_TX, "bt_tx"))
-		pr_err("failed to request gpio bt_tx\n");
 
 	msm_bt_power_device.dev.platform_data = &bluetooth_power;
 
@@ -785,30 +745,30 @@ static int salsa_wifi_power(int on, int source)
 	//In order to follow wifi power sequence, we have to detect bt power status
 	mutex_lock(&wifibtmutex);
 	if (on) {
-		bt_on = gpio_get_value(BT_GPIO_POWER);
+		bt_on = gpio_get_value(SALSA_GPIO_BT_PWR_EN);
 		if (!bt_on) {
 			/* if WLAN on and BT off */
-			gpio_set_value(WL_PWR_EN, 1);
-			gpio_set_value(BT_GPIO_POWER, 1);
+			gpio_set_value(SALSA_GPIO_WL_PWR_EN, 1);
+			gpio_set_value(SALSA_GPIO_BT_PWR_EN, 1);
 			msleep(100);
-			gpio_set_value(WL_RST, 1);
-			gpio_set_value(BT_GPIO_RESET, 1);
+			gpio_set_value(SALSA_GPIO_WL_RST, 1);
+			gpio_set_value(SALSA_GPIO_BT_RST, 1);
 			msleep(100);
-			gpio_set_value(BT_GPIO_RESET, 0);
-			gpio_set_value(BT_GPIO_POWER, 0);
+			gpio_set_value(SALSA_GPIO_BT_RST, 0);
+			gpio_set_value(SALSA_GPIO_BT_PWR_EN, 0);
 		} else {
 			/* if WLAN on and BT on */
-			gpio_set_value(WL_PWR_EN, 1);
+			gpio_set_value(SALSA_GPIO_WL_PWR_EN, 1);
 			msleep(100);
-			gpio_set_value(WL_RST, 1);
+			gpio_set_value(SALSA_GPIO_WL_RST, 1);
 		}
 		if (source == SALSA_WIFI_POWER_CALL_USERSPACE)
 			wifi_set_carddetect(1);
 		pr_info("%s: Wifi Power ON\n", __func__);
 	} else {
-		gpio_set_value(WL_PWR_EN, 0);
+		gpio_set_value(SALSA_GPIO_WL_PWR_EN, 0);
 		msleep(100);
-		gpio_set_value(WL_RST, 0);
+		gpio_set_value(SALSA_GPIO_WL_RST, 0);
 		if (source == SALSA_WIFI_POWER_CALL_USERSPACE)
 			wifi_set_carddetect(0);
 		pr_info("%s: Wifi Power OFF\n", __func__);
@@ -954,7 +914,6 @@ static struct msm_acpu_clock_platform_data qsd8x50_clock_data = {
 };
 
 #ifdef CONFIG_LEDS_TCA6507
-#define TCA6507_GPIO 33
 static struct led_info tca6507_leds[] = {
 	[0] = {
 		.name = "notification",
@@ -973,13 +932,13 @@ static struct led_info tca6507_leds[] = {
 static void tca6507_gpio_init(void) {
 	int rc;
 
-	rc = gpio_request(TCA6507_GPIO, "TCA6507_EN");
+	rc = gpio_request(SALSA_GPIO_TCA6507_EN, "TCA6507_EN");
 	if (rc) {
 		pr_err("Could not request TCA6507 GPIO");
 		return;
 	}
 
-	gpio_direction_output(TCA6507_GPIO, 1);
+	gpio_direction_output(SALSA_GPIO_TCA6507_EN, 1);
 };
 
 static struct tca6507_platform_data tca6507_leds_pdata = {
@@ -1010,27 +969,27 @@ static struct i2c_board_info msm_i2c_board_info[] __initdata = {
 #if defined(CONFIG_TOUCHSCREEN_AUO_H353)
 	{
 		I2C_BOARD_INFO("auo-touch", 0x5C),
-		.irq           =  MSM_GPIO_TO_INT(108),
+		.irq = MSM_GPIO_TO_INT(SALSA_GPIO_AUO_TS_IRQ),
 		.platform_data = &auo_ts_data,
 	},
 #endif
 #if defined(CONFIG_AVR)
 	{
 		I2C_BOARD_INFO("avr", 0x66),
-		.irq = MSM_GPIO_TO_INT(AVR_IRQ_GPIO),
+		.irq = MSM_GPIO_TO_INT(SALSA_GPIO_AVR_IRQ),
 		.platform_data = &avr_pdata,
 	},
 #endif
 #if defined(CONFIG_BOSCH_SMB380)
 	{
 		I2C_BOARD_INFO("smb380", 0x38),
-		.irq           =  MSM_GPIO_TO_INT(22),
+		.irq = MSM_GPIO_TO_INT(SALSA_GPIO_MS3C_IRQ),
 	},
 #endif //defined(CONFIG_BOSCH_SMB380)
 #if defined(CONFIG_SENSORS_ISL29018)
 	{
 		I2C_BOARD_INFO("isl29018", 0x44),
-		.irq           =  MSM_GPIO_TO_INT(153),
+		.irq =  MSM_GPIO_TO_INT(SALSA_GPIO_ISL29018_IRQ),
 	},
 #endif //defined(CONFIG_SENSORS_ISL29018)
 #if defined(CONFIG_LEDS_TCA6507)
@@ -1333,10 +1292,9 @@ static struct sdcc_gpio sdcc_cfg_data[] = {
 	},
 };
 
-#define A1_GPIO_SDCARD_DETECT 37
 static unsigned int SDMMC_status(struct device *dev)
 {
-	if(!gpio_get_value(A1_GPIO_SDCARD_DETECT))
+	if(!gpio_get_value(SALSA_GPIO_SDC1_DET))
 		return 1;
 	else
 		return 0;
@@ -1393,10 +1351,10 @@ static void __init sd2p85_init(void)
 		return;
 	}
 
-	if (gpio_request(A1_GPIO_SDCARD_DETECT, "sdc1_card_detect")) {
+	if (gpio_request(SALSA_GPIO_SDC1_DET, "sdc1_card_detect")) {
 		pr_err("failed to request gpio sdc1_card_detect\n");
 	} else {
-		gpio_tlmm_config(GPIO_CFG(A1_GPIO_SDCARD_DETECT, 0, GPIO_INPUT,
+		gpio_tlmm_config(GPIO_CFG(SALSA_GPIO_SDC1_DET, 0, GPIO_INPUT,
 			GPIO_NO_PULL, GPIO_2MA), GPIO_ENABLE);
 	}
 }
@@ -1503,9 +1461,9 @@ static struct mmc_platform_data qsd8x50_sdc1_data = {
 	.ocr_mask	= MMC_VDD_27_28 | MMC_VDD_28_29,
 	.translate_vdd	= msm_sdcc_setup_power,
 	.mmc_bus_width  = MMC_CAP_4_BIT_DATA,
-	.status_irq = MSM_GPIO_TO_INT(A1_GPIO_SDCARD_DETECT),
-	.status = SDMMC_status,
-	.irq_flags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+	.status_irq	= MSM_GPIO_TO_INT(SALSA_GPIO_SDC1_DET),
+	.status		= SDMMC_status,
+	.irq_flags	= IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
 	.msmsdcc_fmin	= 144000,
 	.msmsdcc_fmid	= 25000000,
 	.msmsdcc_fmax	= 45000000,
@@ -1513,11 +1471,11 @@ static struct mmc_platform_data qsd8x50_sdc1_data = {
 };
 #endif
 
-static struct mmc_platform_data qsd8x50_sdcc2_wifi = {
-	.ocr_mask = MMC_VDD_27_28 | MMC_VDD_28_29,
-	.translate_vdd = msm_sdcc_setup_power,
+static struct mmc_platform_data salsa_wifi_data = {
+	.ocr_mask	= MMC_VDD_27_28 | MMC_VDD_28_29,
+	.translate_vdd	= msm_sdcc_setup_power,
 	.register_status_notify = wifi_status_register,
-	.embedded_sdio = &bcm_wifi_emb_data,
+	.embedded_sdio	= &bcm_wifi_emb_data,
 	.mmc_bus_width  = MMC_CAP_4_BIT_DATA,
 	.msmsdcc_fmin	= 144000,
 	.msmsdcc_fmid	= 25000000,
@@ -1540,8 +1498,8 @@ static void __init qsd8x50_init_mmc(void)
 	msm_add_sdcc(1, &qsd8x50_sdc1_data);
 #endif
 
-#if defined(CONFIG_MMC_MSM_SDC2_SUPPORT)
-	msm_add_sdcc(2, &qsd8x50_sdcc2_wifi);
+#ifdef CONFIG_MMC_MSM_SDC2_SUPPORT
+	msm_add_sdcc(2, &salsa_wifi_data);
 #endif
 }
 
