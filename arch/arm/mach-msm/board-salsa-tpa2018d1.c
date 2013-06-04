@@ -116,7 +116,6 @@ static int tpa2018d1_release(struct inode *inode, struct file *file)
 {
 	mutex_lock(&spk_amp_lock);
 	tpa2018d1_opened = 0;
-	pr_err("%s: release\n", __func__);
 	mutex_unlock(&spk_amp_lock);
 
 	return 0;
