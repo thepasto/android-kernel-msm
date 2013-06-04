@@ -29,13 +29,6 @@
 # define GPIO_HEADSET_AMP 157
 #endif
 
-#ifdef CONFIG_AUDIO_TPA2018
-#include <mach/tpa2018.h>
-#endif
-#ifdef CONFIG_ACER_HEADSET
-#include <mach/acer_headset.h>
-#endif
-
 void analog_init(void)
 {
 	/* stereo pmic init */
@@ -58,6 +51,14 @@ void analog_headset_enable(int en)
 	gpio_set_value(GPIO_HEADSET_AMP, !!en);
 }
 
+#ifdef CONFIG_MACH_ACER_A1
+extern void tpa2018d1_set_speaker_amp(int on);
+
+void analog_speaker_enable(int en)
+{
+	tpa2018d1_set_speaker_amp(!!en);
+}
+#else
 void analog_speaker_enable(int en)
 {
 	struct spkr_config_mode scm;
@@ -68,45 +69,26 @@ void analog_speaker_enable(int en)
 		scm.is_left_chan_en = 1;
 		scm.is_stereo_en = 1;
 		scm.is_hpf_en = 1;
-#ifndef CONFIG_MACH_ACER_A1
 		pmic_spkr_en_mute(LEFT_SPKR, 0);
 		pmic_spkr_en_mute(RIGHT_SPKR, 0);
 		pmic_set_spkr_configuration(&scm);
 		pmic_spkr_en(LEFT_SPKR, 1);
 		pmic_spkr_en(RIGHT_SPKR, 1);
-#endif
 		
-#ifdef CONFIG_AUDIO_TPA2018
-		set_adie_flag(1);
-		tpa2018_software_shutdown(0);
-#endif
-		pr_info("[Audio] Enable Speaker AMP \n");
 		/* unmute */
-#ifndef CONFIG_MACH_ACER_A1
 		pmic_spkr_en_mute(LEFT_SPKR, 1);
 		pmic_spkr_en_mute(RIGHT_SPKR, 1);
-#endif
 	} else {
-#ifndef CONFIG_MACH_ACER_A1
 		pmic_spkr_en_mute(LEFT_SPKR, 0);
 		pmic_spkr_en_mute(RIGHT_SPKR, 0);
 
 		pmic_spkr_en(LEFT_SPKR, 0);
 		pmic_spkr_en(RIGHT_SPKR, 0);
-#endif
-#ifdef CONFIG_AUDIO_TPA2018
-		set_adie_flag(0);
-		tpa2018_software_shutdown(1);
-#endif
-		pr_info("[Audio] Disable Speaker AMP \n");
-#ifndef CONFIG_MACH_ACER_A1
-		pmic_spkr_en(LEFT_SPKR, 0);
-		pmic_spkr_en(RIGHT_SPKR, 0);
 
 		pmic_set_spkr_configuration(&scm);
-#endif
 	}
 }
+#endif
 
 void analog_mic_enable(int en)
 {

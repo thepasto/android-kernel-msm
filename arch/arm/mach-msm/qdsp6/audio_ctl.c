@@ -93,17 +93,8 @@ static int q6_ioctl(struct inode *inode, struct file *file,
 	case AUDIO_SWITCH_DEVICE:
 		rc = copy_from_user(&id, (void *)arg, sizeof(id));
 #ifdef CONFIG_MACH_ACER_A1
-		/*
-		 * XXX FIXME HACK
-		 * Temporary workaround for old libaudio for system, alarm
-		 * and notification sounds in the headset.
-		 * Magic ID is
-		 * ADSP_AUDIO_DEVICE_ID_SPKR_PHONE_MONO_W_MONO_HEADSET
-		 */
-		if (!rc) {
-			if (id[0] == 0x0108c508)
-				id[1] = 0;
-		}
+		pr_info("%s: AUDIO_SWITCH_DEVICE: %08x, %08x\n",
+			__func__, id[0], id[1]);
 #endif
 		if (!rc)
 			rc = q6audio_do_routing(id[0], id[1]);

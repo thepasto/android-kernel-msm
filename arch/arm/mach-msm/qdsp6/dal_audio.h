@@ -590,6 +590,7 @@ struct adsp_buffer_event {
 #define ADSP_AUDIO_DEVICE_ID_NULL_SINK				0x108e512
 
 #ifdef CONFIG_MACH_ACER_A1
+/* Hearing Aid Compatibility, same IDs as non-HAC? */
 #define ADSP_AUDIO_DEVICE_ID_HAC_HANDSET_SPKR	0x107ac88
 #define ADSP_AUDIO_DEVICE_ID_HAC_HANDSET_MIC	0x107ac8d
 #endif
