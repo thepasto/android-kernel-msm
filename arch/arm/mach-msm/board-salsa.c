@@ -917,15 +917,12 @@ static struct msm_acpu_clock_platform_data qsd8x50_clock_data = {
 static struct led_info tca6507_leds[] = {
 	[0] = {
 		.name = "notification",
-		.default_trigger = "timer",
 	},
 	[1] = {
 		.name = "call",
-		.default_trigger = "timer",
 	},
 	[2] = {
 		.name = "battery",
-		.default_trigger = "timer",
 	},
 };
 
