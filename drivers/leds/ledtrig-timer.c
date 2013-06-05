@@ -81,6 +81,7 @@ static DEVICE_ATTR(delay_off, 0644, led_delay_off_show, led_delay_off_store);
 static void timer_trig_activate(struct led_classdev *led_cdev)
 {
 	int rc;
+	char *envp[2] = { "TRIGGER=timer", NULL };
 
 	led_cdev->trigger_data = NULL;
 
@@ -90,6 +91,9 @@ static void timer_trig_activate(struct led_classdev *led_cdev)
 	rc = device_create_file(led_cdev->dev, &dev_attr_delay_off);
 	if (rc)
 		goto err_out_delayon;
+
+	// Notify userspace the files are created
+	kobject_uevent_env(&led_cdev->dev->kobj, KOBJ_CHANGE, envp);
 
 	led_cdev->trigger_data = (void *)1;
 
