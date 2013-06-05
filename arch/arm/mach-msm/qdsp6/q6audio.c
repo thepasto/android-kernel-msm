@@ -1066,11 +1066,11 @@ static int audio_update_acdb(uint32_t adev, uint32_t acdb_id)
 	uint32_t sample_rate;
 	int sz;
 
+#ifndef CONFIG_MACH_ACER_A1
 	if (q6_device_to_dir(adev) == Q6_RX) {
 		rx_acdb = acdb_id;
 		sample_rate = q6_device_to_rate(adev);
 	} else {
-
 		tx_acdb = acdb_id;
 		if (tx_clk_freq > 16000)
 			sample_rate = 48000;
@@ -1079,6 +1079,14 @@ static int audio_update_acdb(uint32_t adev, uint32_t acdb_id)
 		else
 			sample_rate = 8000;
 	}
+#else
+	sample_rate = q6_device_to_rate(adev);
+
+	if (q6_device_to_dir(adev) == Q6_RX)
+		rx_acdb = acdb_id;
+	else
+		tx_acdb = acdb_id;
+#endif
 
 	if (acdb_id == 0)
 		acdb_id = q6_device_to_cad_id(adev);
@@ -1127,6 +1135,7 @@ static void _audio_tx_path_enable(int reconf, uint32_t acdb_id)
 	if (audio_tx_path_id) {
 		adie_enable();
 		adie_set_path(adie, audio_tx_path_id, ADIE_PATH_TX);
+
 		if (tx_clk_freq > 16000)
 			adie_set_path_freq_plan(adie, ADIE_PATH_TX, 48000);
 		else if (tx_clk_freq > 8000)
