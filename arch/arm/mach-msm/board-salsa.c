@@ -96,6 +96,7 @@
 #include <mach/msm_tsif.h>
 #include <mach/msm_battery.h>
 #include "board-salsa.h"
+#include "board-salsa-tpa2018d1.h"
 
 #if defined(CONFIG_ACER_HEADSET_BUTT)
 #include <mach/acer_headset_butt.h>
@@ -525,6 +526,10 @@ static struct platform_device msm_audio_device = {
 	.id     = 0,
 	.num_resources  = ARRAY_SIZE(msm_audio_resources),
 	.resource       = msm_audio_resources,
+};
+
+static struct tpa2018d1_platform_data tpa2018d1_pdata = {
+       .gpio_tpa2018_spk_en = SALSA_GPIO_TPA2018_SPK_AMP_EN,
 };
 
 #ifdef CONFIG_AVR
@@ -984,11 +989,10 @@ static struct i2c_board_info msm_i2c_board_info[] __initdata = {
 		.platform_data  = &tca6507_leds_pdata,
 	},
 #endif
-#if defined(CONFIG_AUDIO_TPA2018)
 	{
-		I2C_BOARD_INFO("tpa2018", 0x58),
+		I2C_BOARD_INFO("tpa2018d1", 0x58),
+		.platform_data = &tpa2018d1_pdata,
 	},
-#endif
 };
 
 #ifdef CONFIG_MSM_CAMERA
