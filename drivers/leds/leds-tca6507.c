@@ -77,6 +77,8 @@
  *
  */
 
+#define DEBUG
+
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/leds.h>
@@ -84,6 +86,9 @@
 #include <linux/i2c.h>
 #include <linux/gpio.h>
 #include <linux/workqueue.h>
+#ifdef CONFIG_MACH_ACER_A1
+#include <linux/delay.h>
+#endif
 #include <linux/leds-tca6507.h>
 
 /* LED select registers determine the source that drives LED outputs */
@@ -179,6 +184,10 @@ struct tca6507_chip {
 	struct gpio_chip		gpio;
 	const char			*gpio_name[NUM_LEDS];
 	int				gpio_map[NUM_LEDS];
+#endif
+#ifdef CONFIG_MACH_ACER_A1
+	int				gpio_en; /* TCA6507 EN */
+	int				is_on; /* Set if chip is powered up */
 #endif
 };
 
@@ -334,6 +343,21 @@ static void set_times(struct tca6507_chip *tca, int bank)
 	set_code(tca, TCA6507_INITIALIZE, bank, INIT_CODE);
 }
 
+#ifdef CONFIG_MACH_ACER_A1
+static void tca6507_power_on(struct tca6507_chip *tca, int on)
+{
+	spin_lock_irq(&tca->lock);
+	tca->is_on = !!on;
+	spin_unlock_irq(&tca->lock);
+
+	dev_dbg(&tca->client->dev, "TCA6507_EN = %d\n", tca->is_on);
+	gpio_set_value(tca->gpio_en, tca->is_on);
+	/* TCA6507 needs 60us to enter a shutdown state */
+	if (! tca->is_on)
+		udelay(60);
+}
+#endif
+
 /* Write all needed register of tca6507 */
 
 static void tca6507_work(struct work_struct *work)
@@ -344,16 +368,54 @@ static void tca6507_work(struct work_struct *work)
 	int set;
 	u8 file[TCA6507_REG_CNT];
 	int r;
+#ifdef CONFIG_MACH_ACER_A1
+	int led_on = 0;
+	int mask;
+#endif
 
 	spin_lock_irq(&tca->lock);
 	set = tca->reg_set;
 	memcpy(file, tca->reg_file, TCA6507_REG_CNT);
 	tca->reg_set = 0;
+#ifdef CONFIG_MACH_ACER_A1
+	for (r = 0; r < NUM_LEDS; r++) {
+		/* LED is off if S0=1|0, S1=0, S2=0 */
+		mask = 1 << r;
+
+		dev_dbg(&cl->dev, "LED[%d] = S2=%d S1=%d S0=%d\n", r,
+			(file[2] & mask) >> r,
+			(file[1] & mask) >> r,
+			(file[0] & mask) >> r
+		);
+
+		if ((file[1] & mask) != 0 || (file[2] & mask) != 0) {
+			led_on = 1;
+#ifndef DEBUG
+			break;
+#endif
+		}
+
+	}
+
+	/* Need to re-send all the configuration */
+	if (led_on && !tca->is_on)
+		set = 0x7f;
+#endif
 	spin_unlock_irq(&tca->lock);
+
+#ifdef CONFIG_MACH_ACER_A1
+	if (led_on && !tca->is_on)
+		tca6507_power_on(tca, 1);
+#endif
 
 	for (r = 0; r < TCA6507_REG_CNT; r++)
 		if (set & (1<<r))
 			i2c_smbus_write_byte_data(cl, r, file[r]);
+
+#ifdef CONFIG_MACH_ACER_A1
+	if (!led_on && tca->is_on)
+		tca6507_power_on(tca, 0);
+#endif
 }
 
 static void led_release(struct tca6507_led *led)
@@ -687,6 +749,12 @@ static int __devinit tca6507_probe(struct i2c_client *client,
 			NUM_LEDS);
 		return -ENODEV;
 	}
+#ifdef CONFIG_MACH_ACER_A1
+	if (!pdata->gpio_tca6507_en) {
+		dev_err(&client->dev, "Need TCA6507_EN gpio number\n");
+		return -ENODEV;
+	}
+#endif
 	err = -ENOMEM;
 	tca = kzalloc(sizeof(*tca), GFP_KERNEL);
 	if (!tca)
@@ -696,7 +764,16 @@ static int __devinit tca6507_probe(struct i2c_client *client,
 	INIT_WORK(&tca->work, tca6507_work);
 	spin_lock_init(&tca->lock);
 	i2c_set_clientdata(client, tca);
+#ifdef CONFIG_MACH_ACER_A1
+	err = gpio_request(pdata->gpio_tca6507_en, "TCA6507_EN");
+	if (err) {
+		pr_err("Could not request TCA6507 GPIO");
+		goto exit;
+	}
 
+	gpio_direction_output(pdata->gpio_tca6507_en, 0);
+	tca->gpio_en = pdata->gpio_tca6507_en;
+#endif
 	for (i = 0; i < NUM_LEDS; i++) {
 		struct tca6507_led *l = tca->leds + i;
 
@@ -728,6 +805,11 @@ exit:
 		if (tca->leds[i].led_cdev.name)
 			led_classdev_unregister(&tca->leds[i].led_cdev);
 	cancel_work_sync(&tca->work);
+#ifdef CONFIG_MACH_ACER_A1
+	if (tca->gpio_en)
+		tca6507_power_on(tca, 0);
+	gpio_free(tca->gpio_en);
+#endif
 	i2c_set_clientdata(client, NULL);
 	kfree(tca);
 	return err;
@@ -745,6 +827,11 @@ static int __devexit tca6507_remove(struct i2c_client *client)
 	}
 	tca6507_remove_gpio(tca);
 	cancel_work_sync(&tca->work);
+#ifdef CONFIG_MACH_ACER_A1
+	if (tca->gpio_en)
+		tca6507_power_on(tca, 0);
+	gpio_free(tca->gpio_en);
+#endif
 	i2c_set_clientdata(client, NULL);
 	kfree(tca);
 

@@ -24,6 +24,9 @@
 
 struct tca6507_platform_data {
 	struct led_platform_data leds;
+#ifdef CONFIG_MACH_ACER_A1
+	int gpio_tca6507_en;
+#endif
 #ifdef CONFIG_GPIOLIB
 	int gpio_base;
 	void (*setup)(unsigned gpio_base, unsigned ngpio);

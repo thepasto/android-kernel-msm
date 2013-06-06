@@ -926,23 +926,12 @@ static struct led_info tca6507_leds[] = {
 	},
 };
 
-static void tca6507_gpio_init(void) {
-	int rc;
-
-	rc = gpio_request(SALSA_GPIO_TCA6507_EN, "TCA6507_EN");
-	if (rc) {
-		pr_err("Could not request TCA6507 GPIO");
-		return;
-	}
-
-	gpio_direction_output(SALSA_GPIO_TCA6507_EN, 1);
-};
-
 static struct tca6507_platform_data tca6507_leds_pdata = {
 	.leds = {
 		.num_leds	= 7,
 		.leds		= tca6507_leds,
-	}
+	},
+	.gpio_tca6507_en	= SALSA_GPIO_TCA6507_EN,
 };
 
 #endif // CONFIG_LEDS_TCA6507
@@ -1652,9 +1641,6 @@ static void __init qsd8x50_init(void)
 	bt_power_init();
 	audio_gpio_init();
 	msm_device_i2c_init();
-#ifdef CONFIG_LEDS_TCA6507
-	tca6507_gpio_init();
-#endif
 #if defined(CONFIG_MS3C)
 	compass_gpio_init();
 #endif
