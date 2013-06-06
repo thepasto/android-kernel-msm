@@ -77,8 +77,6 @@
  *
  */
 
-#define DEBUG
-
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/leds.h>
@@ -752,7 +750,7 @@ static int __devinit tca6507_probe(struct i2c_client *client,
 #ifdef CONFIG_MACH_ACER_A1
 	if (!pdata->gpio_tca6507_en) {
 		dev_err(&client->dev, "Need TCA6507_EN gpio number\n");
-		return -ENODEV;
+		return -EINVAL;
 	}
 #endif
 	err = -ENOMEM;
@@ -806,9 +804,10 @@ exit:
 			led_classdev_unregister(&tca->leds[i].led_cdev);
 	cancel_work_sync(&tca->work);
 #ifdef CONFIG_MACH_ACER_A1
-	if (tca->gpio_en)
+	if (tca->gpio_en) {
 		tca6507_power_on(tca, 0);
-	gpio_free(tca->gpio_en);
+		gpio_free(tca->gpio_en);
+	}
 #endif
 	i2c_set_clientdata(client, NULL);
 	kfree(tca);
@@ -828,9 +827,10 @@ static int __devexit tca6507_remove(struct i2c_client *client)
 	tca6507_remove_gpio(tca);
 	cancel_work_sync(&tca->work);
 #ifdef CONFIG_MACH_ACER_A1
-	if (tca->gpio_en)
+	if (tca->gpio_en) {
 		tca6507_power_on(tca, 0);
-	gpio_free(tca->gpio_en);
+		gpio_free(tca->gpio_en);
+	}
 #endif
 	i2c_set_clientdata(client, NULL);
 	kfree(tca);
