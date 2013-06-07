@@ -26,7 +26,7 @@ $(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_OUT) $(KERNEL_CONFIG)
 	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi-
 	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- modules
 	mkdir -p $(TARGET_OUT)/etc/wifi
-	$(ACP) $(KERNEL_OUT)/$(BCM_WIFI_PATH)/bcm4329.ko $(TARGET_OUT)/etc/wifi/dhd.ko
+	$(ACP) $(KERNEL_OUT)/$(BCM_WIFI_PATH)/dhd.ko $(TARGET_OUT)/etc/wifi/dhd.ko
 
 kerneltags: $(KERNEL_OUT) $(KERNEL_CONFIG)
 	$(MAKE) -C kernel O=../$(KERNEL_OUT) ARCH=arm CROSS_COMPILE=arm-eabi- tags
