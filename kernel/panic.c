@@ -25,7 +25,7 @@
 
 #ifdef CONFIG_MACH_ACER_A1
 #include <asm/cacheflush.h>
-#include "../arch/arm/mach-msm/include/mach/shared_acer.h"
+#include <mach/board_acer.h>
 #include "../arch/arm/mach-msm/proc_comm.h"
 #endif
 
@@ -68,7 +68,7 @@ NORET_TYPE void panic(const char * fmt, ...)
 	long i;
 
 #ifdef CONFIG_MACH_ACER_A1
-	acer_smem_proc_cmd_type proc_comm_type;
+	acer_smem_proc_cmd_type proc_comm_type = ACER_SMEM_PROC_CMD_OS_RAM_DUMP;
 	int ret = 0;
 #endif
 
@@ -107,7 +107,6 @@ NORET_TYPE void panic(const char * fmt, ...)
 #ifdef CONFIG_MACH_ACER_A1
 	flush_cache_all();
 	//instruct modem side to enter ram dump mode
-	proc_comm_type = ACER_SMEM_PROC_CMD_OS_RAM_DUMP;
 	ret = msm_proc_comm(PCOM_CUSTOMER_CMD1, &proc_comm_type, 0);
 	if(ret == -1)
 		pr_err("Entering ram dump mode error\n");

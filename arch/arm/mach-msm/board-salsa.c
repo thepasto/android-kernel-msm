@@ -119,6 +119,7 @@
 #ifdef CONFIG_LEDS_TCA6507
 #include <linux/leds-tca6507.h>
 #endif
+#include <mach/board_acer.h>
 
 #define SMEM_SPINLOCK_I2C	"D:I2C02000021"
 
@@ -148,7 +149,6 @@
 
 static DEFINE_MUTEX(wifibtmutex);
 
-
 static int wifi_status_register(void (*callback)(int card_present, void *dev_id), void *dev_id);
 int wifi_set_carddetect(int val);
 
@@ -159,7 +159,6 @@ int wifi_set_carddetect(int val);
 /* Global Acer variables */
 unsigned hw_version		= 0;
 unsigned lcm_id			= 0;
-unsigned test_mode		= 0;
 unsigned boot_in_recovery	= 0;
 
 #define RECOVERY_STRING "recovery"
@@ -180,14 +179,6 @@ static int __init lcm_id_setup(char *id)
 	return 1;
 }
 __setup("lcm_id=", lcm_id_setup);
-
-static int __init test_mode_setup(char *id)
-{
-	test_mode=(id[0]-'0');
-	pr_debug("test_mode=%d\n",test_mode);
-	return 1;
-}
-__setup("test_mode=", test_mode_setup);
 
 #ifdef CONFIG_USB_ANDROID
 static struct usb_mass_storage_platform_data mass_storage_pdata = {
@@ -1652,7 +1643,7 @@ static void __init qsd8x50_init(void)
 				ARRAY_SIZE(msm_i2c_board_info));
 	msm_pm_set_platform_data(msm_pm_data, ARRAY_SIZE(msm_pm_data));
 	kgsl_phys_memory_init();
-
+	acer_smem_init();
 }
 
 static void __init qsd8x50_allocate_memory_regions(void)

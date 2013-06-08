@@ -39,6 +39,9 @@
 #ifdef CONFIG_VFP
 #include <asm/vfp.h>
 #endif
+#ifdef CONFIG_MACH_ACER_A1
+#include <mach/board_acer.h>
+#endif
 
 #include "smd_private.h"
 #include "smd_rpcrouter.h"
@@ -150,9 +153,6 @@ static struct attribute_group *msm_pm_mode_attr_group[MSM_PM_SLEEP_MODE_NR];
 static struct attribute **msm_pm_mode_attrs[MSM_PM_SLEEP_MODE_NR];
 static struct kobj_attribute *msm_pm_mode_kobj_attrs[MSM_PM_SLEEP_MODE_NR];
 
-#ifdef CONFIG_MACH_ACER_A1
-static acer_smem_flag_t *acer_smem_flag;
-#endif
 /*
  * Write out the attribute.
  */
@@ -1024,7 +1024,9 @@ static int msm_pm_power_collapse
 	}
 
 #ifdef CONFIG_MACH_ACER_A1
-	acer_smem_flag->acer_os_pwr_state = (from_idle)?ACER_OS_IDLE_MODE:ACER_OS_SUSPEND_MODE;
+	acer_smem_set_os_pwr_state(from_idle ? ACER_OS_IDLE_MODE : ACER_OS_SUSPEND_MODE);
+	pr_debug("%s: power state = %s\n", __func__,
+			(from_idle ? "ACER_OS_IDLE_MODE" : "ACER_OS_SUSPEND_MODE")); 
 #endif
 
 	saved_vector[0] = msm_pm_reset_vector[0];
@@ -1073,7 +1075,8 @@ static int msm_pm_power_collapse
 		saved_acpuclk_rate);
 
 #ifdef CONFIG_MACH_ACER_A1
-	acer_smem_flag->acer_os_pwr_state = ACER_OS_NORMAL_MODE;
+	acer_smem_set_os_pwr_state(ACER_OS_NORMAL_MODE);
+	pr_debug("%s: power mode = ACER_OS_NORMAL_MODE\n", __func__);
 #endif
 
 	if (acpuclk_set_rate(smp_processor_id(), saved_acpuclk_rate,
@@ -1704,14 +1707,14 @@ static void msm_pm_restart(char str, const char *cmd)
 	unsigned id3 = 2;	//ACER_SDDL_OS_ONLY
 
 	msm_rpcrouter_close();
-	if (restart_reason==0x77665503) {
-		pr_debug(KERN_ERR "%s: update_all\n", __func__);
+	if (restart_reason == 0x77665503) {
+		pr_debug("%s: update_all\n", __func__);
 		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id1);
-	} else if (restart_reason==0x77665504) {
-		pr_debug(KERN_ERR "%s: update_amss\n", __func__);
+	} else if (restart_reason == 0x77665504) {
+		pr_debug("%s: update_amss\n", __func__);
 		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id2);
-	} else if (restart_reason==0x77665505) {
-		pr_debug(KERN_ERR "%s: update_os\n", __func__);
+	} else if (restart_reason == 0x77665505) {
+		pr_debug("%s: update_os\n", __func__);
 		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id3);
 	} else {
 		msm_proc_comm(PCOM_RESET_CHIP_IMM, &restart_reason, 0);
@@ -1778,8 +1781,8 @@ static int __init msm_pm_init(void)
 	int ret;
 
 #ifdef CONFIG_MACH_ACER_A1
-	acer_smem_flag = smem_alloc(SMEM_ID_VENDOR0, sizeof(acer_smem_flag_t));
-	acer_smem_flag->acer_os_pwr_state = ACER_OS_NORMAL_MODE;
+	acer_smem_set_os_pwr_state(ACER_OS_NORMAL_MODE);
+	pr_debug("%s: power state: ACER_OS_NORMAL_MODE\n", __func__);
 #endif
 
 	pm_power_off = msm_pm_power_off;

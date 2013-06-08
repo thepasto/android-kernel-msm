@@ -1,9 +1,21 @@
-#if defined (CONFIG_ACER_DEBUG)
-#define DEBUG
-#endif
+/* drivers/power/acer_battery.c
+ *
+ * Copyright (C) 200? Allan Lin <Allan_Lin@acer.com.tw>
+ * Copyright (C) 2013 Roman Yepishev <roman.yepishev@gmail.com>
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+*/
 
 #include <linux/module.h>
 #include <linux/err.h>
+#include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
 #include <linux/types.h>
@@ -11,7 +23,7 @@
 #include <linux/interrupt.h>
 #include <asm/io.h>
 #include <linux/i2c.h>
-#include <../arch/arm/mach-msm/smd_private.h>
+#include <mach/board_acer.h>
 #include <mach/msm_rpcrouter.h>
 #include <linux/delay.h>
 #include <mach/board.h>
@@ -27,7 +39,6 @@
 #define UNKNOWN                         0
 #define MAX_TEMPERATURE                 450 /* celsius 45.0 */
 #define RE_CHARG_TEMP                   400 /* celsius 40.0 */
-#define FAKE_BATT_VOLT                  3900 /* voltage 3.9 V */
 #define CONVERT_TEMPERATURE(DATA,DATA1) (((DATA <<8)|DATA1)*10/4) -2730
 
 #define PMAPP_GENPROG                   0x30000060
@@ -43,13 +54,12 @@ struct bq27210_data {
 	int fs_data;
 	bool bFirst;
 
-	acer_smem_flag_t *charge_type;
-
 	struct power_supply ac;
 	struct power_supply usb;
 	struct power_supply battery;
 
 	struct i2c_client *client;
+	struct device *dev;
 	struct timer_list polling_timer;
 	struct work_struct work;
 
@@ -83,24 +93,34 @@ static int batt_cb_func(struct msm_rpc_client *client, void *buffer, int in_size
 	struct rpc_request_hdr *req;
 	req = (struct rpc_request_hdr *)buffer;
 
+	dev_dbg(battery_data->dev, "%s: entered\n", __func__);
+
 	switch (be32_to_cpu(req->procedure)) {
 	case CHARGER_NOTIFY_CB_PROC:
+		dev_dbg(battery_data->dev, "%s: got CHARGER_NOTIFY_CB_PROC\n",
+									__func__);
 		schedule_work(&battery_data->work);
-		pr_info("[BATT] batt_cb_func start +++++++++++ \n");
+		dev_dbg(battery_data->dev, "%s: msm_rpc_start_accepted_reply\n",
+									__func__);
+
 		msm_rpc_start_accepted_reply(client, be32_to_cpu(req->xid),
 						RPC_ACCEPTSTAT_SUCCESS);
-		pr_info("[BATT] msm_rpc_send_accepted_reply start \n");
+		dev_dbg(battery_data->dev, "%s: msm_rpc_send_accepted_reply\n",
+									__func__);
 		ret = msm_rpc_send_accepted_reply(client, 0);
-		pr_info("[BATT] msm_rpc_send_accepted_reply done \n");
+		dev_dbg(battery_data->dev, "%s: msm_rpc_send_accepted_reply done\n",
+									__func__);
 		if (ret)
-			pr_err("[BATT] msm_rpc_send_accepted_reply error \n");
+			dev_err(battery_data->dev,
+				"%s: msm_rpc_send_accepted_reply error\n",
+				__func__);
 		break;
 	default:
-		pr_err("[BATT] %s: procedure not supported %d\n", __func__,
-						be32_to_cpu(req->procedure));
+		dev_err(battery_data->dev, "%s: procedure not supported %d\n",
+					__func__, be32_to_cpu(req->procedure));
 		break;
 	}
-	pr_info("[BATT] batt_cb_func finish ---------\n");
+	pr_debug("%s: exiting with %d\n", __func__, ret);
 	return ret;
 }
 
@@ -109,24 +129,30 @@ static ssize_t set_charging(struct device *device,
 			   const char *buf, size_t count)
 {
 	if (buf[0] == '0') {
-		battery_data->charge_type->acer_batt_temp_info = ACER_BATT_TEMP_ERROR_LV0;
+		dev_dbg(battery_data->dev, "%s: batt_temp_info=ERROR_LV0\n",
+									__func__);
+		acer_smem_set_batt_temp_info(ACER_BATT_TEMP_ERROR_LV0);	
 		battery_data->fs_data = 1;
-	} else if(buf[0] == '2'){
-		battery_data->charge_type->acer_batt_temp_info = ACER_BATT_TEMP_OK;
+	} else if (buf[0] == '2') {
+		dev_dbg(battery_data->dev, "%s: batt_temp_info=OK\n", __func__);
+		acer_smem_set_batt_temp_info(ACER_BATT_TEMP_OK);
 		battery_data->fs_data = 2;
 	} else {
-		battery_data->charge_type->acer_batt_temp_info = ACER_BATT_TEMP_OK;
+		dev_dbg(battery_data->dev, "%s: batt_temp_info=OK\n", __func__);
+		acer_smem_set_batt_temp_info(ACER_BATT_TEMP_OK);
 		battery_data->fs_data = 0;
 	}
-	pr_info("[BATT] charger status : %s (%d) Charger type = %d\n",
-		(battery_data->charge_type->acer_batt_temp_info)?"Disable":"Enable",
-		battery_data->fs_data,
-		battery_data->charge_type->acer_charger_type);
+	/* Magic: Charger status = Battery temp info */
+	dev_dbg(battery_data->dev,
+		"%s: charger status: %s (%d) Charger type = %d\n", __func__,
+		acer_smem_get_batt_temp_info() ? "Disabled" : "Enabled",
+		battery_data->fs_data, acer_smem_get_charger_type());
+
 	return count;
 }
 
 static struct device_attribute battery_attrs =
-__ATTR(charging, S_IRUGO| S_IWUSR | S_IWGRP,NULL, set_charging);
+__ATTR(charging, S_IRUGO| S_IWUSR | S_IWGRP, NULL, set_charging);
 
 static int read_batt_status(uint8_t *data_addr , int count)
 {
@@ -148,12 +174,16 @@ static int read_batt_status(uint8_t *data_addr , int count)
 
 	rc = i2c_transfer(battery_data->client->adapter, msgs, 2);
 	if (rc < 0) {
-		pr_err("[BATT] %s error %d,read addr= 0x%x,len= %d\n", __FUNCTION__,rc,*data_addr,count);
+		dev_err(battery_data->dev,
+			"%s: error %d, read addr= 0x%x,len= %d\n", __func__,
+			rc, *data_addr, count);
 		return -1;
 	}
+
 	return 0;
 }
 
+/* Looks like magic */
 static void battery_work(struct work_struct *work)
 {
 	uint8_t data[2] = { 0 };
@@ -167,47 +197,57 @@ static void battery_work(struct work_struct *work)
 
 	/* Get voltage */
 	data[0] = I2C_CMD_VOLTAGE;
-	if(read_batt_status(data,2))
+	if (read_batt_status(data, 2)) {
+		dev_err(battery_data->dev, "%s: read_batt_status failed\n", __func__);
 		goto no_data;
-	battery_data->voltage = (((uint16_t)data[1])<<8)|data[0];
+	}
+	battery_data->voltage = (((uint16_t)data[1]) << 8) | data[0];
 
 	/* Get temperature */
 	data[0] = I2C_CMD_TEMP;
 	if(read_batt_status(data,2))
 		goto no_data;
+
 	new_temp = CONVERT_TEMPERATURE((uint16_t)data[1], data[0]);
-	if(abs(new_temp - battery_data->temperature) > 50 && !battery_data->bFirst) {
-		pr_info("[BATT] new_temp = %d\n",new_temp);
+	if (abs(new_temp - battery_data->temperature) > 50 && !battery_data->bFirst) {
+		dev_dbg(battery_data->dev, "%s: new_temp = %d\n", __func__, new_temp);
 		wCount[2]++;
-	} else if(abs(new_temp - battery_data->temperature) >= 10
+	} else if (abs(new_temp - battery_data->temperature) >= 10
 				|| battery_data->bFirst == 1 || wCount[2] >= 5
 				|| battery_data->temperature > MAX_TEMPERATURE
 				|| (battery_data->health == POWER_SUPPLY_HEALTH_OVERHEAT && new_temp < 410)) {
-		pr_debug("[BATT] temperature (new,old)=(%d,%d)!!\n",new_temp,battery_data->temperature);
+		dev_dbg(battery_data->dev, "%s: temperature (new, old)=(%d, %d)\n",
+			__func__, new_temp, battery_data->temperature);
 		bchange = 1;
 		battery_data->temperature = new_temp;
 		wCount[2] = 0;
 	}
 
 	/* Get Charger type */
-	if(battery_data->charge_type->acer_charger_type != old_charger_type || battery_data->bFirst == 1) {
-		pr_info("[BATT] Charger type (new,old)=(%d,%d)!!\n",battery_data->charge_type->acer_charger_type,old_charger_type);
-		old_charger_type = battery_data->charge_type->acer_charger_type;
+	dev_dbg(battery_data->dev, "%s: acer_smem_get_charger_type = %d, "
+		"old_charger_type = %d\n", __func__, acer_smem_get_charger_type(),
+		old_charger_type);
+
+	if (acer_smem_get_charger_type() != old_charger_type || battery_data->bFirst == 1) {
+		dev_dbg(battery_data->dev, "%s: charger type (new, old)=(%d, %d)\n",
+			__func__, acer_smem_get_charger_type(), old_charger_type);
+		old_charger_type = acer_smem_get_charger_type();
 		bchange = 1;
 	}
 
 	/* Transform NAC and LMD into SOC */
 	data[0] = I2C_CMD_NAC;
-	if(read_batt_status(data,2))
+	if (read_batt_status(data, 2))
 		goto no_data;
-	nac = (((uint16_t)data[1])<<8)|data[0];
+	nac = (((uint16_t)data[1]) << 8) | data[0];
 
 	data[0] = I2C_CMD_LMD;
-	if(read_batt_status(data,2))
+	if (read_batt_status(data, 2))
 		goto no_data;
-	lmd = (((uint16_t)data[1])<<8)|data[0];
-	if(!lmd){
-		pr_err("[BATT] Wrong data: lmd = 0\n");
+	lmd = (((uint16_t)data[1]) << 8) | data[0];
+	if (!lmd) {
+		dev_err(battery_data->dev, "%s: Wrong data: lmd = 0\n",
+			__func__);
 		wCount[0]++;
 		if(wCount[0] >= 5)
 			goto wrong_data;
@@ -215,20 +255,23 @@ static void battery_work(struct work_struct *work)
 	}
 
 	new_capacity = ((nac*5000-lmd*600)/(lmd*43));
-	if(new_capacity >= 100) {
+	if (new_capacity >= 100) {
 		new_capacity = 100;
-	} else if(new_capacity <= 0) {
-		pr_info("[BATT] capacity = 0\n");
+	} else if (new_capacity <= 0) {
+		dev_warn(battery_data->dev, "%s: new capacity <= 0 (%d)\n",
+				__func__, new_capacity);
 		new_capacity = 0;
 	}
 
-	if(abs(new_capacity - battery_data->capacity) > 5 && !battery_data->bFirst) {
-		pr_err("[BATT] nac =0x%x lmd = 0x%x new_capacity = %d\n",nac,lmd,new_capacity);
+	if (abs(new_capacity - battery_data->capacity) > 5 && !battery_data->bFirst) {
+		dev_dbg(battery_data->dev, "%s: nac =0x%x lmd = 0x%x new_capacity = %d\n",
+				__func__, nac, lmd, new_capacity);
 		wCount[1]++;
 		return;
-	} else if((new_capacity != battery_data->capacity)
+	} else if ((new_capacity != battery_data->capacity)
 				|| battery_data->bFirst == 1 || wCount[1] >= 5) {
-		pr_info("[BATT] capacity (new,old)=(%d,%d)!!\n",new_capacity,battery_data->capacity);
+		dev_dbg(battery_data->dev, "%s: capacity (new, old)=(%d, %d)\n",
+				__func__, new_capacity, battery_data->capacity);
 		bchange = 1;
 		battery_data->capacity = new_capacity;
 
@@ -251,11 +294,9 @@ no_data:
 	}
 wrong_data:
 	battery_data->have_battery = 0;
-	pr_err("[BATT] No battery !!!!!!!\n");
-	if(!test_mode)
-		battery_data->charge_type->acer_batt_temp_info = ACER_BATT_TEMP_ERROR_LV0;
+	dev_dbg(battery_data->dev, "%s: No battery detected\n", __func__);
 change_status:
-	if(bchange == 1) {
+	if (bchange == 1) {
 		power_supply_changed(&battery_data->ac);
 		power_supply_changed(&battery_data->usb);
 		power_supply_changed(&battery_data->battery);
@@ -266,11 +307,10 @@ change_status:
 static void polling_timer_func(unsigned long unused)
 {
 	schedule_work(&battery_data->work);
-	if(ACER_CHARGER_TYPE_NO_CHARGER == battery_data->charge_type->acer_charger_type) {
+	if (ACER_CHARGER_TYPE_NONE == acer_smem_get_charger_type()) {
 		mod_timer(&battery_data->polling_timer, jiffies +
 			msecs_to_jiffies(POLLING_TIME_NO_CHARGER));
-	}
-	else {
+	} else {
 		mod_timer(&battery_data->polling_timer, jiffies +
 			msecs_to_jiffies(POLLING_TIME));
 	}
@@ -279,7 +319,7 @@ static void polling_timer_func(unsigned long unused)
 #ifdef CONFIG_HAS_EARLYSUSPEND
 void battery_early_resume(struct early_suspend *h)
 {
-	battery_data->bFirst =1;
+	battery_data->bFirst = 1;
 	schedule_work(&battery_data->work);
 }
 #endif
@@ -290,8 +330,10 @@ static int ac_get_property(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
-		val->intval = (ACER_CHARGER_TYPE_IS_AC ==
-				battery_data->charge_type->acer_charger_type)?1:0;
+		if (acer_smem_get_charger_type() == ACER_CHARGER_TYPE_AC)
+			val->intval = 1;
+		else
+			val->intval = 0;
 		break;
 	default:
 		return -EINVAL;
@@ -305,8 +347,10 @@ static int usb_get_property(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
-		val->intval = (ACER_CHARGER_TYPE_IS_USB ==
-				battery_data->charge_type->acer_charger_type)?1:0;
+		if (acer_smem_get_charger_type() == ACER_CHARGER_TYPE_USB)
+			val->intval = 1;
+		else
+			val->intval = 0;
 		break;
 	default:
 		return -EINVAL;
@@ -318,30 +362,44 @@ static int battery_get_property(struct power_supply *psy,
 				 enum power_supply_property psp,
 				 union power_supply_propval *val)
 {
-	if(!battery_data->have_battery && !test_mode) {
+	bool temp_ok;
+	bool has_charger;
+	bool battery_full;
+
+	if(!battery_data->have_battery) {
 		val->intval = UNKNOWN;
 		return 0;
 	}
+
 	switch (psp) {
 	case POWER_SUPPLY_PROP_STATUS:
-		val->intval = ((ACER_CHARGER_TYPE_NO_CHARGER ==
-				battery_data->charge_type->acer_charger_type) || (
-				battery_data->charge_type->acer_batt_temp_info !=
-				ACER_BATT_TEMP_OK) || (100 == battery_data->capacity))?
-				POWER_SUPPLY_STATUS_NOT_CHARGING:
-				POWER_SUPPLY_STATUS_CHARGING;
+		temp_ok = acer_smem_get_batt_temp_info() == ACER_BATT_TEMP_OK;
+		has_charger = acer_smem_get_charger_type() != ACER_CHARGER_TYPE_NONE;
+		battery_full = 100 == battery_data->capacity;
+
+		dev_dbg(battery_data->dev,
+			"%s: POWER_SUPPLY_PROP_STATUS temp_ok=%d has_charger=%d "
+			"battery_full=%d", __func__, temp_ok, has_charger,
+			battery_full);
+
+		if (temp_ok && has_charger && !battery_full)
+			val->intval = POWER_SUPPLY_STATUS_CHARGING;
+		else
+			val->intval = POWER_SUPPLY_STATUS_NOT_CHARGING;
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
-		if(test_mode == 1) {
-			battery_data->health = POWER_SUPPLY_HEALTH_UNSPEC_FAILURE;
-		} else if(battery_data->temperature > MAX_TEMPERATURE ||
-				(battery_data->health == POWER_SUPPLY_HEALTH_OVERHEAT &&
-				battery_data->temperature > RE_CHARG_TEMP)) {
-			battery_data->health = POWER_SUPPLY_HEALTH_OVERHEAT;
-		} else if(battery_data->temperature < 0){
-			battery_data->health = POWER_SUPPLY_HEALTH_COLD;
-		} else {
+		/* TODO: Move to battery_work */
+		temp_ok = (battery_data->temperature < MAX_TEMPERATURE &&
+			   battery_data->temperature < RE_CHARG_TEMP &&
+			   battery_data->temperature > 0);
+
+		if (temp_ok) {
 			battery_data->health = POWER_SUPPLY_HEALTH_GOOD;
+		} else {
+			if (battery_data->temperature < 0)
+				battery_data->health = POWER_SUPPLY_HEALTH_COLD;
+			else
+				battery_data->health = POWER_SUPPLY_HEALTH_OVERHEAT;
 		}
 		val->intval = battery_data->health;
 		break;
@@ -359,31 +417,34 @@ static int battery_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = battery_data->temperature;
-		if (!battery_data->fs_data) {
-			if((ACER_CHARGER_TYPE_IS_AC ==
-				battery_data->charge_type->acer_charger_type)
-			||(ACER_CHARGER_TYPE_IS_USB ==
-				battery_data->charge_type->acer_charger_type))
-			{
-				if(ACER_BATT_TEMP_ERROR_LV0 ==
-					battery_data->charge_type->acer_batt_temp_info ||
-				   ACER_BATT_TEMP_ERROR_LV1 ==
-					battery_data->charge_type->acer_batt_temp_info)
-				{
-					if(battery_data->temperature <= RE_CHARG_TEMP &&
-							battery_data->temperature >= 0 ) {
-						battery_data->charge_type->acer_batt_temp_info =
-						ACER_BATT_TEMP_OK;
-					}
-				} else {
-					if(battery_data->temperature > MAX_TEMPERATURE ||
-							battery_data->temperature < 0 ) {
-						pr_info("[BATT] Temperature anomaly(%d)!\n",
-							battery_data->temperature);
-						battery_data->charge_type->acer_batt_temp_info =
-						ACER_BATT_TEMP_ERROR_LV1;
-					}
-				}
+
+		/* changing status while reading property ?*/
+		/* TODO: move to battery_work */
+		if (battery_data->fs_data)
+			break;
+
+		/* ACER_BATT_TEMP_OK */
+		has_charger = (acer_smem_get_charger_type() == ACER_CHARGER_TYPE_AC ||
+				acer_smem_get_charger_type() == ACER_CHARGER_TYPE_USB);
+
+		temp_ok = (battery_data->temperature < RE_CHARG_TEMP &&
+				battery_data->temperature < MAX_TEMPERATURE &&
+				battery_data->temperature > 0);
+
+		if (!has_charger)
+			break;
+
+		/* Disable charging; LV0 - power from battery; LV1 - power from AC/USB */
+		if (ACER_BATT_TEMP_ERROR_LV0 == acer_smem_get_batt_temp_info() ||
+			ACER_BATT_TEMP_ERROR_LV1 == acer_smem_get_batt_temp_info()) {
+			if (temp_ok)
+				acer_smem_set_batt_temp_info(ACER_BATT_TEMP_OK);
+		} else {
+			if (!temp_ok) {
+				dev_err(battery_data->dev,
+					"%s: Temperature anomaly(%d)!\n",
+					__func__, battery_data->temperature);
+				acer_smem_set_batt_temp_info(ACER_BATT_TEMP_ERROR_LV1);
 			}
 		}
 		break;
@@ -417,14 +478,16 @@ static int bq27210_probe(struct platform_device *pdev)
 	int ret = 0;
 	int retry = 0;
 	static struct msm_rpc_client *rpc_clt = NULL;
-	pr_debug("[BATT] Enter %s\n",__func__);
+
+	pr_debug("%s: entered\n", __func__);
+
 	battery_data = kzalloc(sizeof(*battery_data), GFP_KERNEL);
 	if (battery_data == NULL) {
 		ret = -ENOMEM;
 		goto err_data_alloc_failed;
 	}
-	memset(battery_data,0,sizeof(*battery_data));
-	battery_data->bFirst =1;
+
+	battery_data->bFirst = 1;
 
 	battery_data->ac.properties = ac_props;
 	battery_data->ac.num_properties = ARRAY_SIZE(ac_props);
@@ -444,10 +507,6 @@ static int bq27210_probe(struct platform_device *pdev)
 	battery_data->battery.name = "battery";
 	battery_data->battery.type = POWER_SUPPLY_TYPE_BATTERY;
 
-	battery_data->charge_type = smem_alloc(SMEM_ID_VENDOR0, sizeof(acer_smem_flag_t));
-	if(!battery_data->charge_type)
-		goto err_data_alloc_failed;
-
 	ret = i2c_add_driver(&battery_driver);
 	if (ret)
 		goto err_i2c_failed;
@@ -466,29 +525,33 @@ static int bq27210_probe(struct platform_device *pdev)
 
 	ret = device_create_file(battery_data->battery.dev, &battery_attrs);
 	if (ret)
-		pr_err("[BATT] device_create_file error \n");
+		dev_err(&pdev->dev, "%s: device_create_file failed\n",
+			__func__);
 
 	platform_set_drvdata(pdev, battery_data);
 
 	INIT_WORK(&battery_data->work, battery_work);
 
 	/* Use RPC CallBack */
-	do{
-		rpc_clt = msm_rpc_register_client("batt_cb",PMAPP_GENPROG,
-						PMAPP_GENVERS, 0,batt_cb_func);
+	do {
+		rpc_clt = msm_rpc_register_client("batt_cb", PMAPP_GENPROG,
+						PMAPP_GENVERS, 0, batt_cb_func);
 		if (retry > 3) {
-			pr_err("[BATT] msm_rpc_register_client error\n");
+			dev_err(&pdev->dev, "%s: msm_rpc_register_client failed\n",
+					__func__);
 			goto err_data_alloc_failed;
 		}
+
 		if (!rpc_clt) {
 			retry++;
 			msleep(100);
 		}
-	}while(!rpc_clt);
-	ret = msm_rpc_client_req(rpc_clt,CHARGER_NOTIFY_CB_PROC,
+	} while (!rpc_clt);
+
+	ret = msm_rpc_client_req(rpc_clt, CHARGER_NOTIFY_CB_PROC,
 					cb_register_arg, NULL, NULL, NULL, -1);
 	if (ret)
-		pr_err("[BATT] msm_rpc_client_req error \n");
+		dev_err(&pdev->dev, "%s: msm_rpc_client_req failed\n", __func__);
 
 	setup_timer(&battery_data->polling_timer, polling_timer_func, 0);
 	mod_timer(&battery_data->polling_timer, jiffies + msecs_to_jiffies(POLLING_TIME));
@@ -498,7 +561,7 @@ static int bq27210_probe(struct platform_device *pdev)
 	battery_data->early_resume.resume = battery_early_resume;
 	register_early_suspend(&battery_data->early_resume);
 #endif
-	pr_info("[BATT] probe done\n");
+	dev_dbg(&pdev->dev, "%s: done\n", __func__);
 	return 0;
 
 err_battery_failed:
@@ -510,7 +573,7 @@ err_ac_failed:
 err_i2c_failed:
 	i2c_del_driver(&battery_driver);
 err_data_alloc_failed:
-	pr_err("[BATT] probe error\n");
+	dev_err(&pdev->dev, "probe failed\n");
 	return ret;
 }
 
@@ -527,13 +590,14 @@ static int bq27210_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int battery_probe(
-	struct i2c_client *client, const struct i2c_device_id *id)
+static int battery_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	battery_data->client = client;
+	battery_data->dev = &client->dev;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
-		pr_err("[BATT] i2c_check_functionality error\n");
+		dev_err(battery_data->dev, "%s: i2c_check_functionality error\n",
+									__func__);
 
 	strlcpy(client->name, BATTERY_DRIVER_NAME, I2C_NAME_SIZE);
 	i2c_set_clientdata(client, &battery_data);
@@ -546,7 +610,6 @@ static int battery_remove(struct i2c_client *client)
 	i2c_del_driver(&battery_driver);
 	return 0;
 }
-
 
 static const struct i2c_device_id battery_id[] = {
 	{ BATTERY_DRIVER_NAME, 0 },

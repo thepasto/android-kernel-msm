@@ -46,7 +46,7 @@
 #include <linux/uaccess.h>
 #include <linux/wakelock.h>
 #ifdef CONFIG_MACH_ACER_A1
-#include <../../../arch/arm/mach-msm/smd_private.h>
+#include <mach/board_acer.h>
 #include <mach/msm_rpcrouter.h>
 #endif
 
@@ -130,9 +130,6 @@ struct msm_endpoint {
 static void usb_do_work(struct work_struct *w);
 static void usb_do_remote_wakeup(struct work_struct *w);
 
-#ifdef CONFIG_MACH_ACER_A1
-static acer_smem_flag_t *acer_smem_flag = NULL;
-#endif
 
 #define USB_STATE_IDLE    0
 #define USB_STATE_ONLINE  1
@@ -225,13 +222,6 @@ static int msm72k_set_halt(struct usb_ep *_ep, int value);
 static void flush_endpoint(struct msm_endpoint *ept);
 static void msm72k_pm_qos_update(int);
 
-#ifdef CONFIG_MACH_ACER_A1
-static void acer_set_charger_type(acer_charger_type_t value)
-{
-	if (acer_smem_flag)
-		acer_smem_flag->acer_charger_type = value;
-}
-#endif
 
 static void msm_hsusb_set_state(enum usb_device_state state)
 {
@@ -267,19 +257,30 @@ static ssize_t print_switch_state(struct switch_dev *sdev, char *buf)
 static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 {
 #ifdef CONFIG_MACH_ACER_A1
+	acer_charger_type_t charger_type = ACER_CHARGER_TYPE_USB;
+	enum chg_type res;
+
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS) {
-		acer_set_charger_type(ACER_CHARGER_TYPE_IS_AC);
-		return USB_CHG_TYPE__WALLCHARGER;
+		charger_type = ACER_CHARGER_TYPE_AC;
 	} else {
-		if (hw_version != ACER_HW_VERSION_0_5) { /* HW 0.5 ID pin always low! */
-			if ((readl(USB_OTGSC) & OTGSC_ID) != OTGSC_ID){ /* ID Pin Low! */
-				acer_set_charger_type(ACER_CHARGER_TYPE_IS_AC);
-				return USB_CHG_TYPE__WALLCHARGER;
-			}
+		/* HW 0.5 ID pin always low, only USB charging */
+		if (hw_version != ACER_HW_VERSION_0_5) {
+			if ((readl(USB_OTGSC) & OTGSC_ID) != OTGSC_ID)
+				/* ID Pin Low */
+				charger_type = ACER_CHARGER_TYPE_AC;
 		}
-		acer_set_charger_type(ACER_CHARGER_TYPE_IS_USB);
-		return USB_CHG_TYPE__SDP;
 	}
+
+	acer_smem_set_charger_type(charger_type);
+
+	if (charger_type == ACER_CHARGER_TYPE_AC)
+		res = USB_CHG_TYPE__WALLCHARGER;
+	else if (charger_type == ACER_CHARGER_TYPE_USB)
+		res = USB_CHG_TYPE__SDP;
+	else
+		res = USB_CHG_TYPE__INVALID;
+
+	return res;
 #else
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS)
 		return USB_CHG_TYPE__WALLCHARGER;
@@ -350,11 +351,11 @@ static void usb_chg_detect(struct work_struct *w)
 
 #ifdef CONFIG_MACH_ACER_A1
 	if( !(OTGSC_BSV & readl(USB_OTGSC))){ /* check vbus status to ensure */
-		spin_unlock_irqrestore(&ui->lock, flags);
-		pr_info("%s: WARN! vbus low, goto offline.\n", __func__);
 		ui->usb_state = USB_STATE_NOTATTACHED;
 		ui->chg_type = USB_CHG_TYPE__INVALID;
 		ui->flags |= USB_FLAG_VBUS_OFFLINE;
+		spin_unlock_irqrestore(&ui->lock, flags);
+		pr_info("%s: WARN! vbus low, goto offline.\n", __func__);
 		schedule_work(&ui->work);
 		return;
 	}
@@ -1447,7 +1448,7 @@ static void usb_do_work(struct work_struct *w)
 				cancel_delayed_work(&ui->chg_det);
 
 #ifdef CONFIG_MACH_ACER_A1
-				acer_set_charger_type(ACER_CHARGER_TYPE_NO_CHARGER);
+				acer_smem_set_charger_type(ACER_CHARGER_TYPE_NONE);
 #endif
 				/* if charger is initialized to known type
 				 * we must let modem know about charger
@@ -2274,12 +2275,9 @@ static int msm72k_probe(struct platform_device *pdev)
 		wake_lock_destroy(&ui->wlock);
 		return usb_free(ui, retval);
 	}
+
 #ifdef CONFIG_MACH_ACER_A1
-	acer_smem_flag = smem_alloc(SMEM_ID_VENDOR0, sizeof(acer_smem_flag_t));
-	if (!acer_smem_flag)
-		pr_err("%s: ***cannot allocation acer_smem_flag!\n", __func__);
-	else
-		acer_set_charger_type(ACER_CHARGER_TYPE_NO_CHARGER);
+	acer_smem_set_charger_type(ACER_CHARGER_TYPE_NONE);
 #endif
 	return 0;
 }
