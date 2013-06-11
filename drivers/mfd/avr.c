@@ -12,7 +12,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- */
+*/
 
 #include <linux/device.h>
 #include <linux/module.h>
@@ -26,44 +26,10 @@
 #include <linux/mfd/avr.h>
 #include <linux/err.h>
 
-#define DEV_IOCTLID		0x11
-#define IOC_MAXNR		18
-#define IOCTL_SET_BL_ON		_IOW(DEV_IOCTLID, 1, int)
-#define IOCTL_SET_BL_OFF	_IOW(DEV_IOCTLID, 2, int)
-#define IOCTL_SET_BL_LV		_IOW(DEV_IOCTLID, 3, int)
-#define IOCTL_SET_LED1_ON	_IOW(DEV_IOCTLID, 4, int)
-#define IOCTL_SET_LED1_OFF	_IOW(DEV_IOCTLID, 5, int)
-#define IOCTL_SET_LED2_ON	_IOW(DEV_IOCTLID, 6, int)
-#define IOCTL_SET_LED2_OFF	_IOW(DEV_IOCTLID, 7, int)
-#define IOCTL_KEY_LOCK_TOGGLE	_IOW(DEV_IOCTLID, 8, int)
-#define IOCTL_SET_LED_ON	_IOW(DEV_IOCTLID, 10, int)
-#define IOCTL_SET_LED_OFF	_IOW(DEV_IOCTLID, 11, int)
-
-#define AVR_DRIVER_NAME           "avr"
-
-#define AVR_LED_DELAY_TIME        10000
-
+#define AVR_DRIVER_NAME		"avr"
 #define AVR_I2C_RETRY_COUNT	5
 
-static int __init avr_init(void);
-static int avr_probe(struct i2c_client *client, const struct i2c_device_id *id);
-static int avr_remove(struct i2c_client *client);
-static int avr_suspend(struct i2c_client *client, pm_message_t mesg);
-static int avr_resume(struct i2c_client *client);
-static irqreturn_t avr_interrupt(int irq, void *dev_id);
-static void avr_irq_work_func(struct work_struct *work);
-static void avr_set_power_mode(struct avr_chip *chip, int mode);
-
-#ifdef CONFIG_HAS_EARLYSUSPEND
-static void avr_early_suspend(struct early_suspend *h);
-static void avr_late_resume(struct early_suspend *h);
-#endif
-
 static struct mutex avr_query_lock;
-
-static int __avr_write(struct avr_chip* client, int reg, uint8_t val, int once);
-static int __avr_read(struct avr_chip* client, uint8_t *val, int once);
-static int __avr_query(struct avr_chip* client, int reg, uint8_t *val, int once);
 
 static const struct i2c_device_id avr_id[] = {
 	{ AVR_DRIVER_NAME, 0 },
@@ -88,17 +54,6 @@ struct avr_chip {
 #endif
 };
 
-/* new style I2C driver struct */
-static struct i2c_driver avr_driver = {
-	.probe     = avr_probe,
-	.remove    = avr_remove,
-	.id_table  = avr_id,
-	.suspend   = avr_suspend,
-	.resume    = avr_resume,
-	.driver    = {
-		.name      = AVR_DRIVER_NAME,
-	},
-};
 
 static int __avr_write(struct avr_chip* chip, int reg, uint8_t val, int once)
 {
@@ -221,18 +176,6 @@ static void avr_set_power_mode(struct avr_chip *chip, int mode)
 		dev_err(chip->dev, "%s: error setting mode", __func__);
 }
 
-static int __init avr_init(void)
-{
-	int res=0;
-
-	res = i2c_add_driver(&avr_driver);
-
-	if (res)
-		pr_err("%s: i2c_add_driver failed\n", __func__);
-
-	return res;
-}
-
 static void avr_irq_work_func(struct work_struct *work)
 {
 	struct avr_chip *chip = container_of(work, struct avr_chip, irq_work);
@@ -241,6 +184,38 @@ static void avr_irq_work_func(struct work_struct *work)
 	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_IRQ, NULL);
 	dev_dbg(chip->dev, "%s: finished calling chain with AVR_EVENT_IRQ\n",
 				  __func__);
+}
+
+#ifdef CONFIG_HAS_EARLYSUSPEND
+static void avr_early_suspend(struct early_suspend *h)
+{
+	struct avr_chip *chip = container_of(h, struct avr_chip, early_suspend);
+	dev_dbg(&chip->client->dev, "%s: entered\n", __func__);
+
+	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_EARLYSUSPEND, NULL);
+
+	disable_irq(chip->client->irq);
+	avr_set_power_mode(chip, AVR_POWER_LOW);
+	dev_dbg(&chip->client->dev, "%s: exited\n", __func__);
+}
+
+static void avr_late_resume(struct early_suspend *h)
+{
+	struct avr_chip *chip = container_of(h, struct avr_chip, early_suspend);
+	dev_dbg(&chip->client->dev, "%s: entered\n", __func__);
+
+	avr_set_power_mode(chip, AVR_POWER_NORMAL);
+	enable_irq(chip->client->irq);
+
+	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_LATERESUME, NULL);
+	dev_dbg(&chip->client->dev, "%s: exited\n", __func__);
+}
+#endif
+
+static irqreturn_t avr_interrupt(int irq, void *data)
+{
+	schedule_work(&((struct avr_chip *)data)->irq_work);
+	return IRQ_HANDLED;
 }
 
 static int avr_probe(struct i2c_client *client, const struct i2c_device_id *id)
@@ -349,42 +324,25 @@ static int avr_remove(struct i2c_client *client)
 	return 0;
 }
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
-static void avr_early_suspend(struct early_suspend *h)
+static struct i2c_driver avr_driver = {
+	.probe     = avr_probe,
+	.remove    = avr_remove,
+	.id_table  = avr_id,
+	.driver    = {
+		.name      = AVR_DRIVER_NAME,
+	},
+};
+
+static int __init avr_init(void)
 {
-	struct avr_chip *chip = container_of(h, struct avr_chip, early_suspend);
+	int res=0;
 
-	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_EARLYSUSPEND, NULL);
+	res = i2c_add_driver(&avr_driver);
 
-	disable_irq(chip->client->irq);
-	avr_set_power_mode(chip, AVR_POWER_LOW);
-}
+	if (res)
+		pr_err("%s: i2c_add_driver failed\n", __func__);
 
-static void avr_late_resume(struct early_suspend *h)
-{
-	struct avr_chip *chip = container_of(h, struct avr_chip, early_suspend);
-
-	avr_set_power_mode(chip, AVR_POWER_NORMAL);
-	enable_irq(chip->client->irq);
-
-	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_LATERESUME, NULL);
-}
-#endif
-
-static int avr_suspend(struct i2c_client *client, pm_message_t mesg)
-{
-	return 0;
-}
-
-static int avr_resume(struct i2c_client *client)
-{
-	return 0;
-}
-
-static irqreturn_t avr_interrupt(int irq, void *data)
-{
-	schedule_work(&((struct avr_chip *)data)->irq_work);
-	return IRQ_HANDLED;
+	return res;
 }
 
 static void __exit avr_exit(void)

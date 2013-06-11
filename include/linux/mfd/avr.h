@@ -24,7 +24,7 @@
 #define I2C_REG_LED_1		0xD1
 /* I2C_REG_LED_2 is unused */
 #define I2C_REG_LED_2		0xD2
-#define I2C_REG_BKL		0xD3
+#define I2C_REG_BL		0xD3
 #define I2C_REG_KEY_STATUS	0xD4
 #define I2C_REG_KEY_LOCK	0xD8
 #define I2C_REG_LOW_POWER	0xD9
