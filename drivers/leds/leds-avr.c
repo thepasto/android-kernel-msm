@@ -14,6 +14,7 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/leds.h>
 #include <linux/module.h>
@@ -23,112 +24,115 @@
 
 #include "leds.h"
 
-#define AVR_LED_DRIVER_NAME "avr-led"
+#define AVR_LED_DRIVER_NAME	"avr-led"
 
 /* LCD Backlight */
-#define MAX_BACKLIGHT_BRIGHTNESS	255
-#define DEFAULT_BACKLIGHT_BRIGHTNESS	64
-#define AVR_BKL_MAX_LVL		0x20
-#define AVR_BKL_MIN_LVL		0x01
-#define AVR_BKL_ON		AVR_BKL_MAX_LVL
-#define AVR_BKL_OFF		0x00
+#define MAX_BL_BRIGHTNESS	255
+#define DEFAULT_BL_BRIGHTNESS	64
+#define AVR_BL_MAX_LVL		0x20
+#define AVR_BL_MIN_LVL		0x01
+#define AVR_BL_ON		AVR_BL_MAX_LVL
+#define AVR_BL_OFF		0x00
 
 /* Kepad LEDs */
-#define MAX_LED_BRIGHTNESS	255
-#define DEFAULT_LED_BRIGHTNESS	16
-#define AVR_LED_MAX_LVL		0x20
-#define AVR_LED_ON		AVR_LED_MAX_LVL
-#define AVR_LED_OFF		0x00
+#define MAX_KP_BRIGHTNESS	255
+#define DEFAULT_KP_BRIGHTNESS	16
+#define AVR_KP_MAX_LVL		0x20
+#define AVR_KP_ON		AVR_KP_MAX_LVL
+#define AVR_KP_OFF		0x00
 
-#define AVR_LED_DELAY_TIME	10000
-
-#define AVR_CHANGE_FLAG		(1 << 8)
+#define AVR_BL_CHANGED		1
+#define AVR_KP_CHANGED		1 << 1
 
 struct mutex avr_led_lock;
 
 struct avr_led {
 	struct avr_chip *chip;
 	struct device *dev;
+	/* LCD Backlight */
 	struct led_classdev bl;
-	struct led_classdev keypad;
-
-	int bl_brightness;
-	int keypad_brightness;
+	/* Keypad */
+	struct led_classdev kp;
+	int flags;
 
 	struct work_struct work;
 
 	struct notifier_block notifier;
 };
 
+static int avr_led_brightness_to_avr_val(int brightness, int max_brightness,
+					 int max_avr_level)
+{
+	return (2 * brightness * max_avr_level + max_brightness)
+	       /(2 * max_brightness);
+}
+
 static void avr_led_work(struct work_struct *work)
 {
 	struct avr_led *led = container_of(work, struct avr_led, work);
 	int avr_brightness;
-	int value;
 
 	mutex_lock(&avr_led_lock);
 
 	dev_dbg(led->dev, "%s: called\n", __func__);
 
 	/* LCD */
-	if (led->bl_brightness & AVR_CHANGE_FLAG) {
-	    value = led->bl_brightness ^ AVR_CHANGE_FLAG;
+	if (led->flags & AVR_BL_CHANGED) {
+		avr_brightness = avr_led_brightness_to_avr_val(
+						led->bl.brightness,
+						MAX_BL_BRIGHTNESS,
+						AVR_BL_MAX_LVL);
 
-	    avr_brightness = (2 * value * AVR_BKL_MAX_LVL + MAX_BACKLIGHT_BRIGHTNESS)
-			    /(2 * MAX_BACKLIGHT_BRIGHTNESS);
-
-	    if (avr_write(led->chip, I2C_REG_BKL, avr_brightness, 0))
-		    pr_err("%s: Error setting LCD brightness\n", __func__);
-
-	    led->bl_brightness = value;
+		if (avr_write(led->chip, I2C_REG_BL, avr_brightness, 0))
+			dev_err(led->dev, "%s: Error setting LCD brightness\n",
+								__func__);
 	}
 
 	/* Keypad */
-	if (led->keypad_brightness & AVR_CHANGE_FLAG) {
-	    value = led->keypad_brightness ^ AVR_CHANGE_FLAG;
+	if (led->flags & AVR_KP_CHANGED) {
+		avr_brightness = avr_led_brightness_to_avr_val(
+						led->kp.brightness,
+						MAX_KP_BRIGHTNESS,
+						AVR_KP_MAX_LVL);
 
-	    avr_brightness = (2 * value * AVR_LED_MAX_LVL + MAX_LED_BRIGHTNESS)
-			    /(2 * MAX_LED_BRIGHTNESS);
-
-	    if (avr_write(led->chip, I2C_REG_LED_1, avr_brightness, 0))
-		    pr_err("%s: Error setting keypad brightness\n", __func__);
-
-	    led->keypad_brightness = value;
+		if (avr_write(led->chip, I2C_REG_LED_1, avr_brightness, 0))
+			dev_err(led->dev,"%s: Error setting keypad brightness\n",
+								__func__);
 	}
 
+	led->flags = 0;
+
+	dev_dbg(led->dev, "%s: exited\n", __func__);
 	mutex_unlock(&avr_led_lock);
 }
 
-static void avr_led_backlight_set(struct led_classdev *led_cdev,
+static void avr_led_brightness_set(struct led_classdev *led_cdev,
 	                         enum led_brightness value)
 {
-	struct avr_led *led = container_of(led_cdev, struct avr_led, bl);
-	led->bl_brightness = value | AVR_CHANGE_FLAG;
+	struct avr_led *led = NULL;
+
+	if (led_cdev->name[0] == 'l') {
+		/* lcd-backlight */
+		led = container_of(led_cdev, struct avr_led, bl);
+		led->flags |= AVR_BL_CHANGED;
+	} else if (led_cdev->name[0] == 'k') {
+		/* keyboard-backlight */
+		led = container_of(led_cdev, struct avr_led, kp);
+		led->flags |= AVR_KP_CHANGED;
+	}
+
+	if (!led)
+		return;
+
+	dev_dbg(led->dev, "%s: setting %s brightness to %d\n", __func__,
+			led_cdev->name, led_cdev->brightness);
 
 	schedule_work(&led->work);
 }
 
-static enum led_brightness avr_led_backlight_get(struct led_classdev *led_cdev)
+static enum led_brightness avr_led_brightness_get(struct led_classdev *led_cdev)
 {
-	struct avr_led *led = container_of(led_cdev, struct avr_led, bl);
-	return led->bl_brightness & AVR_CHANGE_FLAG ? led->bl_brightness ^ AVR_CHANGE_FLAG
-						    : led->bl_brightness;
-}
-
-static void avr_led_keypad_set(struct led_classdev *led_cdev,
-	                         enum led_brightness value)
-{
-	struct avr_led *led = container_of(led_cdev, struct avr_led, keypad);
-	led->keypad_brightness = value | AVR_CHANGE_FLAG;
-
-	schedule_work(&led->work);
-}
-
-static enum led_brightness avr_led_keypad_get(struct led_classdev *led_cdev)
-{
-	struct avr_led *led = container_of(led_cdev, struct avr_led, keypad);
-	return led->keypad_brightness & AVR_CHANGE_FLAG ? led->keypad_brightness ^ AVR_CHANGE_FLAG
-							: led->keypad_brightness;
+	return led_cdev->brightness;
 }
 
 static int avr_led_notifier_func(struct notifier_block *nb, unsigned long event, void *dev)
@@ -138,11 +142,8 @@ static int avr_led_notifier_func(struct notifier_block *nb, unsigned long event,
 	dev_dbg(led->dev, "%s: received event %ld\n", __func__, event);
 
 	if (event == AVR_EVENT_LATERESUME) {
-		led_classdev_resume(&led->bl);
-		led_classdev_resume(&led->keypad);
-	} else if (event == AVR_EVENT_EARLYSUSPEND) {
-		led_classdev_suspend(&led->bl);
-		led_classdev_suspend(&led->keypad);
+		/* Userspace does not do this for us for now */
+		led_set_brightness(&led->kp, DEFAULT_KP_BRIGHTNESS);
 	}
 
 	return NOTIFY_OK;
@@ -170,19 +171,18 @@ static int avr_led_probe(struct platform_device *pdev)
 	led->dev	= &pdev->dev;
 	led->chip	= chip;
 
-        led->keypad.name = "keyboard-backlight";
-        led->keypad.brightness_set = avr_led_keypad_set;
-        led->keypad.brightness_get = avr_led_keypad_get;
-        led->keypad.flags = LED_CORE_SUSPENDRESUME;
+	/* If you are changing these, update avr_led_brightness_set */
+        led->kp.name = "keyboard-backlight";
+        led->kp.brightness_set = avr_led_brightness_set;
+        led->kp.brightness_get = avr_led_brightness_get;
 
         led->bl.name = "lcd-backlight";
-        led->bl.brightness_set = avr_led_backlight_set;
-        led->bl.brightness_get = avr_led_backlight_get;
-        led->bl.flags = LED_CORE_SUSPENDRESUME;
+        led->bl.brightness_set = avr_led_brightness_set;
+        led->bl.brightness_get = avr_led_brightness_get;
 
-        rc = led_classdev_register(led->dev, &led->keypad);
+        rc = led_classdev_register(led->dev, &led->kp);
         if (rc < 0)
-                goto out_led_keypad;
+                goto out_led_kp;
 
         rc = led_classdev_register(led->dev, &led->bl);
         if (rc < 0)
@@ -195,18 +195,17 @@ static int avr_led_probe(struct platform_device *pdev)
 
 	mutex_init(&avr_led_lock);
 
-	led_set_brightness(&led->keypad, DEFAULT_LED_BRIGHTNESS);
-	led_set_brightness(&led->bl, DEFAULT_BACKLIGHT_BRIGHTNESS);
+	led_set_brightness(&led->kp, DEFAULT_KP_BRIGHTNESS);
+	led_set_brightness(&led->bl, DEFAULT_BL_BRIGHTNESS);
 
-	dev_info(led->dev, "%s: initialized\n", __func__);
+	dev_dbg(led->dev, "%s: initialized\n", __func__);
 
 	return 0;
 
-	/* led_classdev_unregister(&led->led_bl); */
 out_led_bl:
-	led_classdev_unregister(&led->keypad);
+	led_classdev_unregister(&led->kp);
 
-out_led_keypad:
+out_led_kp:
 	kfree(led);
 	return rc;
 }
@@ -216,32 +215,15 @@ static int __devexit avr_led_remove(struct platform_device *pdev)
 	struct avr_led *led = platform_get_drvdata(pdev);
 
 	led_classdev_unregister(&led->bl);
-	led_classdev_unregister(&led->keypad);
+	led_classdev_unregister(&led->kp);
 
 	kfree(led);
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int avr_led_suspend(struct platform_device *pdev, pm_message_t msg)
-{
-	return 0;
-}
-
-static int avr_led_resume(struct platform_device *pdev)
-{
-	return 0;
-}
-#else
-#define avr_led_suspend	NULL
-#define avr_led_resume	NULL
-#endif // CONFIG_PM
-
 static struct platform_driver avr_led_driver = {
 	.probe		= avr_led_probe,
 	.remove		= __devexit_p(avr_led_remove),
-	.suspend	= avr_led_suspend,
-	.resume		= avr_led_resume,
 	.driver		= {
 		.name = AVR_LED_DRIVER_NAME,
 		.owner = THIS_MODULE,
