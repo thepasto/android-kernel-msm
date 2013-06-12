@@ -43,10 +43,6 @@ static int msm_irq_debug_mask;
 module_param_named(debug_mask, msm_irq_debug_mask, int,
 		   S_IRUGO | S_IWUSR | S_IWGRP);
 
-#if defined(CONFIG_MACH_ACER_A1)
-extern unsigned int redundant_usb_int;
-#endif
-
 #define VIC_REG(off) (MSM_VIC_BASE + (off))
 #define VIC_INT_TO_REG_ADDR(base, irq) (base + (irq / 32) * 4)
 #define VIC_INT_TO_REG_INDEX(irq) ((irq >> 5) & 3)
@@ -457,23 +453,6 @@ void msm_irq_exit_sleep1(uint32_t irq_mask, uint32_t wakeup_reason,
 	}
 
 	writel(3, VIC_INT_MASTEREN);
-
-#if defined(CONFIG_MACH_ACER_A1)
-	if(readl(VIC_RAW_STATUS1) & (0x01<<2)) {
-		// clear the I2C interrupt in resuming procedure to avoid the exception Interrupt
-		// after AMSS Access I2C controller
-		writel(4, VIC_INT_CLEAR1);
-	}
-
-	if((readl(VIC_IRQ_STATUS1) & (0x1 << 26)) &&(!(wakeup_reason & 0x1))) {
-	// software workaround for redundant USB interrupt in resuming procedure, which is
-	// caused by usb controller power down(MPP22) for power saving mechanism;
-	// It represent that waking up is not triggered by USB If wakeup_reason
-	// doesn't equal to 0x1, asking USB driver to enter LPM again.
-		redundant_usb_int = true;
-	}
-
-#endif
 
 	if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP)
 		DPRINT_REGS(VIC_IRQ_STATUS, "%s %x %x %x now",

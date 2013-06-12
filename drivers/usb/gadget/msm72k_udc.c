@@ -47,7 +47,6 @@
 #include <linux/wakelock.h>
 #ifdef CONFIG_MACH_ACER_A1
 #include <mach/board_acer.h>
-#include <mach/msm_rpcrouter.h>
 #endif
 
 static const char driver_name[] = "msm72k_udc";
@@ -348,18 +347,6 @@ static void usb_chg_detect(struct work_struct *w)
 		spin_unlock_irqrestore(&ui->lock, flags);
 		return;
 	}
-
-#ifdef CONFIG_MACH_ACER_A1
-	if( !(OTGSC_BSV & readl(USB_OTGSC))){ /* check vbus status to ensure */
-		ui->usb_state = USB_STATE_NOTATTACHED;
-		ui->chg_type = USB_CHG_TYPE__INVALID;
-		ui->flags |= USB_FLAG_VBUS_OFFLINE;
-		spin_unlock_irqrestore(&ui->lock, flags);
-		pr_info("%s: WARN! vbus low, goto offline.\n", __func__);
-		schedule_work(&ui->work);
-		return;
-	}
-#endif
 
 	temp = ui->chg_type = usb_get_chg_type(ui);
 	spin_unlock_irqrestore(&ui->lock, flags);
