@@ -95,12 +95,10 @@
 #include <mach/msm_spi.h>
 #include <mach/msm_tsif.h>
 #include <mach/msm_battery.h>
+#include <mach/acer_headset.h>
+
 #include "board-salsa.h"
 #include "board-salsa-tpa2018d1.h"
-
-#if defined(CONFIG_ACER_HEADSET_BUTT)
-#include <mach/acer_headset_butt.h>
-#endif
 
 #include "devices.h"
 #include "timer.h"
@@ -344,18 +342,18 @@ static struct auo_platform_data auo_ts_data ={
 };
 #endif
 
-#if defined(CONFIG_ACER_HEADSET_BUTT)
-static struct hs_butt_gpio hs_butt_data = {
-	.gpio_hs_butt = SALSA_GPIO_HS_BUTT,
-	.gpio_hs_dett = SALSA_GPIO_HS_DET,
-	.gpio_hs_mic  = SALSA_GPIO_HS_MIC_BIAS_EN,
+#ifdef CONFIG_ACER_HEADSET
+static struct acer_headset_platform_data acer_headset_pdata = {
+	.gpio_hs_det		= SALSA_GPIO_HS_DET,
+	.gpio_hs_mic_bias_en	= SALSA_GPIO_HS_MIC_BIAS_EN,
+	.gpio_hs_bt		= SALSA_GPIO_HS_BT,
 };
 
-static struct platform_device hs_butt_device = {
-	.name   = "acer-hs-butt",
-	.id     = 0,
-	.dev    = {
-		.platform_data	= &hs_butt_data,
+static struct platform_device acer_headset_device = {
+	.name	= "acer-headset",
+	.id	= 0,
+	.dev	= {
+		.platform_data = &acer_headset_pdata
 	},
 };
 #endif
@@ -1187,8 +1185,8 @@ static struct platform_device *devices[] __initdata = {
 #if defined(CONFIG_ACER_BATTERY)
 	&battery_device,
 #endif
-#if defined(CONFIG_ACER_HEADSET_BUTT)
-	&hs_butt_device,
+#ifdef CONFIG_ACER_HEADSET
+	&acer_headset_device,
 #endif
 };
 

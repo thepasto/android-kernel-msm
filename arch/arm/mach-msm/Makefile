@@ -152,4 +152,3 @@ obj-$(CONFIG_MSM8660_TLMM)	+= tlmm-msm8660.o msm8660-gpio.o
 obj-$(CONFIG_ACER_A1_GPIO_KEYPAD) += keypad-acer-a1.o
 obj-$(CONFIG_ACER_VIBRATOR) += acer_vibrator.o
 obj-$(CONFIG_ACER_HEADSET) += acer_headset.o
-obj-$(CONFIG_ACER_HEADSET_BUTT) += acer_headset_butt.o

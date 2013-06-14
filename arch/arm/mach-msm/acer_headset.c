@@ -1,10 +1,13 @@
 /*
- * Acer Headset device detection driver.
- *
+ * Acer Headset device driver.
  *
  * Copyright (C) 2008 acer Corporation.
+ * Copyright (C) 2013 Roman Yepishev.
  *
  * Authors:
+ *    Roman Yepishev <roman.yepishev@gmail.com>
+ *
+ * Based on the code by
  *    Lawrence Hou <Lawrence_Hou@acer.com.tw>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -19,294 +22,502 @@
  */
 
 /*
-    For detecting acer headset .
+    Mic detection:
 
-    Headset insertion/removal causes UEvent's to be sent, and
+    In case a button IRQ is triggered then the headset is considered
+    to have a mic. Button IRQ is definitely triggered when headset is plugged in
+    so this is a fairly reliable condition.
+
+    Headset insertion/removal causes UEvents to be sent, and
     /sys/class/switch/acer-hs/state to be updated.
 */
 
 
+#define DEBUG
+
 #include <linux/module.h>
 #include <linux/sysdev.h>
-#include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
 #include <linux/irq.h>
 #include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/input.h>
+#include <linux/switch.h>
+#include <linux/spinlock.h>
+#include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/device.h>
-#include <linux/ioctl.h>
 #include <linux/mutex.h>
 #include <linux/input.h>
 #include <asm/gpio.h>
 #include <mach/acer_headset.h>
-#include <mach/acer_headset_butt.h>
 
-#if 0
-#define ACER_HS_DBG(fmt, arg...) printk(KERN_INFO "[ACER_HS]: %s: " fmt "\n", __FUNCTION__, ## arg)
-#else
-#define ACER_HS_DBG(fmt, arg...) do {} while (0)
+#define to_acer_headset(p, n)	container_of(p, struct acer_headset, n)
+
+#define ACER_HEADSET_DRIVER_NAME		"acer-headset"
+
+/* Detection debounce time: 1s */
+#define ACER_HEADSET_HS_DET_DEBOUNCE_TIME	(1 * HZ)
+/* Click debounce time: 200ms */
+#define ACER_HEADSET_HS_BT_DEBOUNCE_TIME	200000000
+
+#define ACER_HEADSET_DEVICE_UNPLUGGED		0
+#define ACER_HEADSET_DEVICE_PLUGGED_IN		1
+#define ACER_HEADSET_DEVICE_HAS_MIC		2
+
+/* 
+ * Compatibility with old userspace in the switch device.
+ *
+ * Old userspace expects NO_MIC state to be 2, while internal state would
+ * instead use bits in a single integer:
+ *
+ * No device: 0
+ * Inserted with mic: 3
+ * Inserted without mic: 1
+ *
+ * 0000 00BA
+ *        ^^-- Plug in state
+ *        `--- Mic state
+ *
+ * This is visible only in the switch device UEvents and sysfs file and can be
+ * removed once the HeadsetObserver is updated.
+ */
+#define ACER_HEADSET_API_COMPAT
+
+#ifdef ACER_HEADSET_API_COMPAT
+#define ACER_HEADSET_COMPAT_PLUGGED_IN		1
+#define ACER_HEADSET_COMPAT_NO_MIC		2
 #endif
 
-#define ACER_HS_DRIVER_NAME	"acer-hs"
-#define GPIO_HEADSET_DETECT	151
-#define GPIO_MIC_BIAS_EN	152
+struct acer_headset {
+	struct device *dev;
 
-bool control;
-static int curstate;
+	struct switch_dev sdev;
+	struct input_dev *button;
 
-static int acer_hs_probe(struct platform_device *pdev);
-static int acer_hs_remove(struct platform_device *pdev);
+	int gpio_hs_det;		/* Detect headset presence */
+	int gpio_hs_mic_bias_en;	/* Enable mic bias */
+	int gpio_hs_bt;			/* Detect mic presence, button click */
 
-static void acer_headset_delay_set_work(struct work_struct *work);
-static void acer_headset_delay_butt_work(struct work_struct *work);
+	int irq_det;			/* IRQ for hs detection */
+	int irq_bt;			/* IRQ for button click */
 
-static struct work_struct short_wq;
-static DECLARE_DELAYED_WORK(set_hs_state_wq, acer_headset_delay_set_work);
-static DECLARE_DELAYED_WORK(set_hs_butt_wq, acer_headset_delay_butt_work);
+	/* Internal state */
+	spinlock_t lock;
+	int state;
 
-static struct platform_device acer_hs_device = {
-	.name		= ACER_HS_DRIVER_NAME,
+	/* Keyboard input */
+	ktime_t hs_bt_event_debounce_time;
+	struct hrtimer hs_bt_event_timer;
+
+	/* Reset state */
+	struct work_struct short_wq;
+
+	/* Detection debounce */
+	struct delayed_work hs_det_debounce_work;
+
+	/* Enable MIC_BIAS_EN halfway through detection debounce */
+	struct delayed_work hs_bt_enable_sensing_work;
 };
 
-static struct platform_driver acer_hs_driver = {
-	.probe		= acer_hs_probe,
-	.remove		= acer_hs_remove,
-	.driver		= {
-		.name		= ACER_HS_DRIVER_NAME,
-		.owner		= THIS_MODULE,
-	},
-};
 
-enum {
-	NO_DEVICE	= 0,
-	ACER_HEADSET	= 1,
-	ACER_HEADSET_NO_MIC   = 2,
-};
-
-static struct hs_res *hr;
-
-static ssize_t acer_hs_print_name(struct switch_dev *sdev, char *buf)
+static ssize_t acer_headset_switch_print_name(struct switch_dev *sdev,
+					      char *buf)
 {
-	switch (switch_get_state(&hr->sdev)) {
-		case NO_DEVICE:
-			return sprintf(buf, "No Device\n");
-		case ACER_HEADSET:
-			return sprintf(buf, "Headset\n");
-		case ACER_HEADSET_NO_MIC:
-			return sprintf(buf, "Headset no mic\n");
+	int state = switch_get_state(sdev);
+#ifdef ACER_HEADSET_API_COMPAT
+	switch (state) {
+		case ACER_HEADSET_DEVICE_UNPLUGGED:
+			return sprintf(buf, "Unplugged\n");
+		case ACER_HEADSET_COMPAT_PLUGGED_IN:
+			return sprintf(buf, "Headset with microphone\n");
+		case ACER_HEADSET_COMPAT_NO_MIC:
+			return sprintf(buf, "Headset without microphone\n");
 	}
 	return -EINVAL;
-}
-
-static ssize_t acer_hs_print_state(struct switch_dev *sdev, char *buf)
-{
-	switch (switch_get_state(&hr->sdev)) {
-		case NO_DEVICE:
-			return sprintf(buf, "%s\n", "0");
-		case ACER_HEADSET:
-			return sprintf(buf, "%s\n", "1");
-		case ACER_HEADSET_NO_MIC:
-			return sprintf(buf, "%s\n", "2");
+#else
+	if (state & ACER_HEADSET_DEVICE_PLUGGED_IN) {
+		if (state & ACER_HEADSET_DEVICE_HAS_MIC)
+			return sprintf(buf, "Headset with microphone\n");
+		else
+			return sprintf(buf, "Headset without microphone\n");
 	}
-	return -EINVAL;
+	else {
+		return sprintf(buf, "Unplugged\n");
+	}
+#endif
 }
 
-static void remove_headset(void)
+static ssize_t acer_headset_switch_print_state(struct switch_dev *sdev,
+					       char *buf)
 {
-	ACER_HS_DBG(" Remove Headset.\n");
-	switch_set_state(&hr->sdev, NO_DEVICE);
+	return sprintf(buf, "%d\n", switch_get_state(sdev));
 }
 
-static void acer_update_headset_switch_state(int state)
+static void acer_headset_reset_state_work(struct work_struct *work)
 {
-	switch_set_state(&hr->sdev, state);
-	ACER_HS_DBG(" headset_switch_state = %d \n", switch_get_state(&hr->sdev));
+	struct acer_headset *headset = to_acer_headset(work, short_wq);
+	unsigned long irq_flags;
+
+	spin_lock_irqsave(&headset->lock, irq_flags);
+	headset->state = ACER_HEADSET_DEVICE_UNPLUGGED;
+	spin_unlock_irqrestore(&headset->lock, irq_flags);
+
+	dev_dbg(headset->dev, "%s: Resetting MIC_BIAS_EN state\n", __func__);
+	gpio_set_value(headset->gpio_hs_mic_bias_en, 0);
+
+	/* Drop keypress if it is somehow got stuck */
+	dev_dbg(headset->dev, "%s: Resetting KEY_MEDIA state\n", __func__);
+	input_report_key(headset->button, KEY_MEDIA, 0);
+	input_sync(headset->button);
 }
 
-static void acer_headset_delay_butt_work(struct work_struct *work)
+static void acer_headset_hs_det_settled_func(struct work_struct *work)
 {
-	ACER_HS_DBG(" ==> Enable headset button !!!\n");
-	set_hs_state(true);
-}
+	struct acer_headset *headset = to_acer_headset(to_delayed_work(work),
+						       hs_det_debounce_work);
+	unsigned long irq_flags;
+#ifdef ACER_HEADSET_API_COMPAT
+	int api_compat_state = 0;
+#endif
 
-static void acer_headset_delay_set_work(struct work_struct *work)
-{
-	bool state;
+	/* hs_det is default high */
+	bool is_plugged_in = !gpio_get_value(headset->gpio_hs_det);
 
-	state = gpio_get_value(hr->det);
-
-	if (!state) {
-		ACER_HS_DBG("delay work: get_hs_type_state() = %d \n",get_hs_type_state());
-		/* 
-		 * hs_type_state is in acer_headset_butt.c and is set true
-		 * by headset button IRQ handler.
-		 */
-		if (get_hs_type_state()) {
-			curstate = ACER_HEADSET;
-			ACER_HS_DBG(" ACER_HEADSET!! \n");
-		} else {
-			curstate = ACER_HEADSET_NO_MIC;
-			ACER_HS_DBG(" ACER_HEADSET_NO_MIC!! \n");
-		}
-		schedule_delayed_work(&set_hs_butt_wq, 500);
+	spin_lock_irqsave(&headset->lock, irq_flags);
+	if (is_plugged_in) {
+		dev_dbg(headset->dev, "%s: Headset is plugged in\n", __func__);
+		headset->state |= ACER_HEADSET_DEVICE_PLUGGED_IN;
 	} else {
-		gpio_set_value(hr->mic_bias_en,0);
-		curstate = NO_DEVICE;
-		set_hs_type_state(false);
-		set_hs_state(false);
-		ACER_HS_DBG(" NO_DEVICE!! \n");
+		dev_dbg(headset->dev, "%s: Headset is NOT plugged in\n",
+								__func__);
+		headset->state = ACER_HEADSET_DEVICE_UNPLUGGED;
 	}
-	ACER_HS_DBG("mic_bias_en = %d \n",gpio_get_value(hr->mic_bias_en));
-	acer_update_headset_switch_state(curstate);
+	spin_unlock_irqrestore(&headset->lock, irq_flags);
+
+	if (headset->state & ACER_HEADSET_DEVICE_PLUGGED_IN) {
+		if (headset->state & ACER_HEADSET_DEVICE_HAS_MIC) {
+			gpio_set_value(headset->gpio_hs_mic_bias_en, 1);
+		}
+	} else {
+		gpio_set_value(headset->gpio_hs_mic_bias_en, 0);
+	}
+
+
+#ifdef DEBUG
+	dev_dbg(headset->dev, "%s: Current state:\n", __func__);
+	if (headset->state) {
+		dev_dbg(headset->dev, "%s:\tACER_HEADSET_DEVICE_PLUGGED_IN\n",
+								__func__);
+		if (headset->state & ACER_HEADSET_DEVICE_HAS_MIC) {
+			dev_dbg(headset->dev, "%s:\tACER_HEADSET_DEVICE_HAS_MIC\n",
+								__func__);
+		}
+	} else {
+		dev_dbg(headset->dev, "%s: ACER_HEADSET_DEVICE_UNPLUGGED\n",
+								__func__);
+	}
+#endif
+
+#ifdef ACER_HEADSET_API_COMPAT	
+	/* API compatibility */
+	if (headset->state) {
+		if (headset->state & ACER_HEADSET_DEVICE_HAS_MIC)
+			api_compat_state = ACER_HEADSET_COMPAT_PLUGGED_IN;
+		else
+			api_compat_state = ACER_HEADSET_COMPAT_NO_MIC;
+	} else {
+		api_compat_state = ACER_HEADSET_DEVICE_UNPLUGGED;
+	}
+
+	switch_set_state(&headset->sdev, api_compat_state);
+#else
+	switch_set_state(&headset->sdev, headset->state);
+#endif
 }
 
-static void acer_update_state_work(struct work_struct *work)
+static void acer_headset_hs_bt_enable_sensing_func(struct work_struct *work)
 {
-	set_hs_type_state(false);
-	set_hs_state(false);
-	ACER_HS_DBG(" Pull up the mic bias enable!! \n");
-	gpio_set_value(hr->mic_bias_en,1);
+	struct acer_headset *headset = to_acer_headset(to_delayed_work(work),
+						       hs_bt_enable_sensing_work);
+
+	gpio_set_value(headset->gpio_hs_mic_bias_en, 1);
 }
 
-static enum hrtimer_restart detect_event_timer_func(struct hrtimer *data)
-{
-	ACER_HS_DBG("");
+static enum hrtimer_restart acer_headset_hs_bt_event_func(struct hrtimer *data) {
+	struct acer_headset *headset = to_acer_headset(data, hs_bt_event_timer);
 
-	schedule_work(&short_wq);
-	schedule_delayed_work(&set_hs_state_wq, 20);
+	int is_plugged_in = !gpio_get_value(headset->gpio_hs_det);
+	int is_pressed = gpio_get_value(headset->gpio_hs_bt);
+
+	if (is_plugged_in && (headset->state & ACER_HEADSET_DEVICE_HAS_MIC)) {
+		dev_dbg(headset->dev, "%s: KEY_MEDIA: %d\n", __func__, is_pressed);
+		input_report_key(headset->button, KEY_MEDIA, is_pressed);
+		input_sync(headset->button);
+	} else {
+		dev_dbg(headset->dev, "%s: Ignoring event - unplugged/not settled\n",
+								__func__);
+	}
+
 	return HRTIMER_NORESTART;
 }
 
-static irqreturn_t hs_det_irq(int irq, void *dev_id)
+static irqreturn_t acer_headset_hs_det_irq(int irq, void *dev_id)
 {
-	ACER_HS_DBG("Update Headset state by scheduling a work.\n");
-	gpio_set_value(hr->mic_bias_en,0);
-	hrtimer_start(&hr->timer, hr->debounce_time, HRTIMER_MODE_REL);
+	struct acer_headset *headset = dev_id;
+
+	dev_dbg(headset->dev, "%s: Got HS_DET IRQ\n", __func__);
+
+	schedule_work(&headset->short_wq);
+
+	/* Enable HS_BT sensing */
+	schedule_delayed_work(&headset->hs_bt_enable_sensing_work,
+			      ACER_HEADSET_HS_DET_DEBOUNCE_TIME / 2);
+
+	/* Check what was plugged in */
+	schedule_delayed_work(&headset->hs_det_debounce_work,
+			      ACER_HEADSET_HS_DET_DEBOUNCE_TIME);
 
 	return IRQ_HANDLED;
 }
 
-static int acer_hs_probe(struct platform_device *pdev)
+static irqreturn_t acer_headset_hs_bt_irq(int irq, void *dev_id)
+{
+	struct acer_headset *headset = dev_id;
+	unsigned long irq_flags;
+
+	dev_dbg(headset->dev, "%s: Got HS_BT IRQ\n", __func__);
+
+	spin_lock_irqsave(&headset->lock, irq_flags);
+	headset->state |= ACER_HEADSET_DEVICE_HAS_MIC;
+	spin_unlock_irqrestore(&headset->lock, irq_flags);
+
+	if (headset->state & ACER_HEADSET_DEVICE_PLUGGED_IN) {
+		dev_dbg(headset->dev, "%s: HS_BT settled, scheduling handler\n",
+								__func__);
+		hrtimer_start(&headset->hs_bt_event_timer,
+			      headset->hs_bt_event_debounce_time,
+			      HRTIMER_MODE_REL);
+	} else {
+		dev_dbg(headset->dev, "%s: HS_BT has not settled", __func__);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static int acer_headset_probe(struct platform_device *pdev)
 {
 	int ret;
+	struct acer_headset *headset = NULL;
+	struct acer_headset_platform_data *pdata = pdev->dev.platform_data;
 
-	printk(KERN_INFO "[ACER-HS]: Registering ACER headset driver\n");
-	hr = kzalloc(sizeof(struct hs_res), GFP_KERNEL);
-	if (!hr)
+	dev_dbg(&pdev->dev, "%s: entered\n", __func__);
+
+	if (!pdata) {
+		dev_err(&pdev->dev, "%s: platform_data is required\n",
+								__func__);
+		return -EINVAL;
+	}
+	
+	headset = kzalloc(sizeof(*headset), GFP_KERNEL);
+	if (!headset)
 		return -ENOMEM;
 
-	hr->debounce_time = ktime_set(0, 500000000);  /* 500 ms */
+	spin_lock_init(&headset->lock);
 
-	INIT_WORK(&short_wq, acer_update_state_work);
-	hr->sdev.name = "acer-hs";
-	hr->sdev.print_name = acer_hs_print_name;
-	hr->sdev.print_state = acer_hs_print_state;
+	dev_set_drvdata(&pdev->dev, headset);
 
-	ret = switch_dev_register(&hr->sdev);
-	if (ret < 0)
-	{
-		pr_err("switch_dev fail!\n");
+	headset->dev = &pdev->dev;
+	headset->state = ACER_HEADSET_DEVICE_UNPLUGGED;
+
+	headset->gpio_hs_det = pdata->gpio_hs_det;
+	headset->gpio_hs_mic_bias_en = pdata->gpio_hs_mic_bias_en;
+	headset->gpio_hs_bt = pdata->gpio_hs_bt;
+
+	/* Work */
+	INIT_WORK(&headset->short_wq, acer_headset_reset_state_work);
+	INIT_DELAYED_WORK(&headset->hs_det_debounce_work,
+					acer_headset_hs_det_settled_func);
+	INIT_DELAYED_WORK(&headset->hs_bt_enable_sensing_work,
+					acer_headset_hs_bt_enable_sensing_func);
+
+	/* HR timer */
+	hrtimer_init(&headset->hs_bt_event_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	headset->hs_bt_event_timer.function = acer_headset_hs_bt_event_func;
+
+	headset->hs_bt_event_debounce_time = ktime_set(0,
+					ACER_HEADSET_HS_BT_DEBOUNCE_TIME); 
+
+	
+	/* GPIOs */
+	ret = gpio_request(headset->gpio_hs_det, "HS_DET");
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: gpio_request for HS_DET failed\n",
+								__func__);
+		goto err_gpio_request_hs_det;
+	}
+
+	ret = gpio_request(headset->gpio_hs_mic_bias_en, "HS_MIC_BIAS_EN");
+	if (ret) {
+		dev_err(&pdev->dev, "%s: gpio_request for HS_MIC_BIAS_EN failed\n",
+								__func__);
+		goto err_gpio_request_hs_mic_bias_en;
+	}
+
+	ret = gpio_request(headset->gpio_hs_bt, "HS_BT");
+	if (ret) {
+		dev_err(&pdev->dev, "%s: gpio_request for HS_BT failed\n",
+								__func__);
+		goto err_gpio_request_hs_bt;
+	}
+
+	gpio_set_value(headset->gpio_hs_mic_bias_en, 0);
+
+	/* Actual devices */
+	/* Switch */
+	headset->sdev.name = "acer-hs";
+	headset->sdev.print_name = acer_headset_switch_print_name;
+	headset->sdev.print_state = acer_headset_switch_print_state;
+
+	ret = switch_dev_register(&headset->sdev);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: switch_dev_register failed\n", __func__);
 		goto err_switch_dev_register;
 	}
 
-	hr->det = GPIO_HEADSET_DETECT;
-	ret = gpio_request(hr->det, "hs_detect");
-	if (ret < 0)
-	{
-		pr_err("request detect gpio fail!\n");
-		goto err_request_detect_gpio;
+	/* Input device */
+	headset->button = input_allocate_device();
+	if (!headset->button) {
+		dev_err(&pdev->dev, "%s: input_allocate_device failed\n",
+								__func__);
+		/* Nothing else fits better */
+		ret = -ENOMEM;
+		goto err_input_allocate_device;
 	}
 
-	/* mic_bias_en - mic bias enable*/
-	hr->mic_bias_en = GPIO_MIC_BIAS_EN;
-	ret = gpio_request(hr->mic_bias_en, "MIC BIAS EN");
+	headset->button->name = ACER_HEADSET_DRIVER_NAME;
+	headset->button->evbit[0]= BIT_MASK(EV_SYN)|BIT_MASK(EV_KEY);
+	headset->button->keybit[BIT_WORD(KEY_MEDIA)] |= BIT_MASK(KEY_MEDIA);
+
+	ret = input_register_device(headset->button);
 	if (ret) {
-		pr_err("GPIO request for MIC BIAS EN failed\n");
-		goto err_request_mic_bias_gpio;
+		dev_err(&pdev->dev, "%s: input_register_device failed\n",
+								__func__);
+		goto err_input_register_device;
 	}
 
-	/* hph_en_amp - head phone amplifier enable*/
-	hr->irq = gpio_to_irq(hr->det);
-	if (hr->irq < 0) {
-		ret = hr->irq;
-		pr_err("get hs detect irq num fail!\n");
-		goto err_get_hs_detect_irq_num_failed;
+	/* IRQs */
+	/* HS_DET IRQ */
+	ret = headset->irq_det = gpio_to_irq(headset->gpio_hs_det);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: gpio_to_irq on HS_DET failed\n",
+								__func__);
+		goto err_gpio_to_irq_hs_det;
 	}
 
-	hrtimer_init(&hr->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	hr->timer.function = detect_event_timer_func;
-
-	ret = request_irq(hr->irq, hs_det_irq,
-			  IRQF_TRIGGER_FALLING, "hs_detect", NULL);
-	if (ret < 0)
-	{
-		pr_err("request detect irq fail!\n");
-		goto err_request_detect_irq;
+	ret = request_irq(headset->irq_det, acer_headset_hs_det_irq,
+			  IRQF_TRIGGER_FALLING, "hs_detect", headset);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: request_irq for HS_DET failed\n",
+								__func__);
+		goto err_request_irq_hs_det;
 	}
 
-#if 0
-	/* open this section for debug usage. */
-	ret = set_irq_wake(hr->irq, 1);
-	if (ret < 0)
-	{
-		pr_info("err_request_detect_irq fail!\n");
-		goto err_request_detect_irq;
+	/* HS_BT IRQ */
+	ret = headset->irq_bt = gpio_to_irq(headset->gpio_hs_bt);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: gpio_to_irq on HS_BT failed\n",
+								__func__);
+		goto err_gpio_to_irq_hs_bt;
 	}
-#endif
-	curstate = switch_get_state(&hr->sdev);
 
-	ACER_HS_DBG("probe done.\n");
+	ret = request_irq(headset->irq_bt, acer_headset_hs_bt_irq,
+			  IRQF_TRIGGER_RISING, "hs_bt", headset);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "%s: request_irq for HS_BT failed\n",
+								__func__);
+		goto err_request_irq_hs_bt;
+	}
+
+
+	dev_dbg(&pdev->dev, "%s: probe done\n", __func__);
 
 	return 0;
 
-err_request_detect_irq:
-	free_irq(hr->irq, 0);
-err_get_hs_detect_irq_num_failed:
-	gpio_free(hr->det);
-err_request_detect_gpio:
-	gpio_free(hr->det);
-err_request_mic_bias_gpio:
-	gpio_free(hr->mic_bias_en);
+err_request_irq_hs_bt:
+err_gpio_to_irq_hs_bt:
+	free_irq(headset->irq_det, headset);
+err_request_irq_hs_det:
+err_gpio_to_irq_hs_det:
+	input_unregister_device(headset->button);
+err_input_register_device:
+	input_free_device(headset->button);
+	headset->button = NULL;
+err_input_allocate_device:
+	switch_dev_unregister(&headset->sdev);
 err_switch_dev_register:
-	pr_err("ACER-HS: Failed to register driver\n");
+	gpio_free(headset->gpio_hs_bt);
+err_gpio_request_hs_bt:
+	gpio_free(headset->gpio_hs_mic_bias_en);
+err_gpio_request_hs_mic_bias_en:
+	gpio_free(headset->gpio_hs_det);
+err_gpio_request_hs_det:
+	dev_set_drvdata(&pdev->dev, NULL);
+	kfree(headset);
 
+	dev_dbg(&pdev->dev, "%s: probe failed\n", __func__);
 	return ret;
 }
 
-static int acer_hs_remove(struct platform_device *pdev)
+static int acer_headset_remove(struct platform_device *pdev)
 {
-	ACER_HS_DBG("");
-	if (switch_get_state(&hr->sdev))
-		remove_headset();
-	gpio_free(hr->det);
-	free_irq(hr->irq, 0);
-	switch_dev_unregister(&hr->sdev);
+	struct acer_headset *headset = dev_get_drvdata(&pdev->dev);
 
+	if (switch_get_state(&headset->sdev))
+		switch_set_state(&headset->sdev, ACER_HEADSET_DEVICE_UNPLUGGED);
+
+	input_unregister_device(headset->button);
+
+	input_free_device(headset->button);
+	headset->button = NULL;
+	switch_dev_unregister(&headset->sdev);
+
+	free_irq(headset->irq_bt, headset);
+	free_irq(headset->irq_det, headset);
+
+	gpio_free(headset->gpio_hs_bt);
+	gpio_free(headset->gpio_hs_mic_bias_en);
+	gpio_free(headset->gpio_hs_det);
+
+	dev_set_drvdata(&pdev->dev, NULL);
+	kfree(headset);
+	
 	return 0;
 }
 
-static int __init acer_hs_init(void)
+static struct platform_driver acer_headset_driver = {
+	.probe		= acer_headset_probe,
+	.remove		= acer_headset_remove,
+	.driver		= {
+		.name		= ACER_HEADSET_DRIVER_NAME,
+		.owner		= THIS_MODULE,
+	},
+};
+
+static int __init acer_headset_init(void)
 {
-	int ret;
-	ACER_HS_DBG("");
-	ret = platform_driver_register(&acer_hs_driver);
-	if (ret)
-		return ret;
-	return platform_device_register(&acer_hs_device);
+	return platform_driver_register(&acer_headset_driver);
 }
 
-static void __exit acer_hs_exit(void)
+static void __exit acer_headset_exit(void)
 {
-	platform_device_unregister(&acer_hs_device);
-	platform_driver_unregister(&acer_hs_driver);
+	platform_driver_unregister(&acer_headset_driver);
 }
 
-module_init(acer_hs_init);
-module_exit(acer_hs_exit);
+module_init(acer_headset_init);
+module_exit(acer_headset_exit);
 
-MODULE_AUTHOR("Lawrence Hou <Lawrence_Hou@acer.com.tw>");
-MODULE_DESCRIPTION("Acer Headset detection driver");
+MODULE_AUTHOR("Roman Yepishev <roman.yepishev@gmail.com>");
+MODULE_DESCRIPTION("Acer Headset Driver");
 MODULE_LICENSE("GPL");
