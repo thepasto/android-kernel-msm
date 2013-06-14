@@ -2292,11 +2292,10 @@ choice
 
 config FB_MSM_LCDC_AUO_WVGA
 	depends on FB_MSM_LCDC_HW
-	bool "LCDC Auo WVGA Panel"
+	bool "LCDC AU Optronics H353VL10 WVGA Panel"
 	select FB_MSM_LCDC_PANEL
-	default n
 	---help---
-	  Support for LCDC Auo WVGA (480x800) panel
+	  Support for LCDC AU Optronics H353VL10 WVGA (800x480) panel
 
 config FB_MSM_LCDC_PRISM_WVGA_PANEL
 	depends on FB_MSM_LCDC_HW

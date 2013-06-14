@@ -458,10 +458,6 @@ static int lcdc_auo_panel_off(struct platform_device *pdev)
 	return 0;
 }
 
-static void lcdc_auo_lcd_set_backlight(struct msm_fb_data_type *mfd) {
-    /* Backlight is handled by AVR */
-}
-
 static int __devinit lcdc_auo_probe(struct platform_device *pdev)
 {
 	msm_fb_add_device(pdev);
@@ -478,7 +474,6 @@ static struct platform_driver this_driver = {
 static struct msm_fb_panel_data lcdc_auo_panel_data = {
 	.on = lcdc_auo_panel_on,
 	.off = lcdc_auo_panel_off,
-	.set_backlight = lcdc_auo_lcd_set_backlight,
 };
 
 
