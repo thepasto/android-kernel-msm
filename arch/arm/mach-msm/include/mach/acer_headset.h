@@ -1,30 +1,19 @@
 /*
- * Acer Headset device detection driver
+ * Acer Headset device driver
  *
- *
- * Copyright (C) 2009 acer Corporation.
+ * Copyright (C) 2013 Roman Yepishev.
  *
  * Authors:
- *    Lawrence Hou <Lawrence_Hou@acer.com.tw>
+ *    Roman Yepishev <roman.yepishev@gmail.com>
  */
 
-#ifndef __ACER_HEADSET_H
-#define __ACER_HEADSET_H
+#ifndef __MACH_ACER_HEADSET_H
+#define __MACH_ACER_HEADSET_H
 
-#include <linux/switch.h>
-#include <asm/uaccess.h>
-#define ACER_HS_IOCTL_MAGIC 'g'
-#define ACER_HS_IOC_MAXNR	2
-
-#define ACER_HS_CHANGE_CONTROL    _IO(ACER_HS_IOCTL_MAGIC, 1)
-#define ACER_HS_ENABLE_AMP    _IO(ACER_HS_IOCTL_MAGIC, 2)
-
-struct hs_res {
-	struct switch_dev sdev;
-	unsigned int det;
-	unsigned int irq;
-	unsigned int mic_bias_en;
-	struct hrtimer timer;
-	ktime_t debounce_time;
+struct acer_headset_platform_data {
+	int gpio_hs_det;
+	int gpio_hs_mic_bias_en;
+	int gpio_hs_bt;
 };
+
 #endif

@@ -34,7 +34,7 @@
 
 /* Headset */
 #define SALSA_GPIO_HS_AMP_EN		39
-#define SALSA_GPIO_HS_BUTT		102
+#define SALSA_GPIO_HS_BT		102
 #define SALSA_GPIO_HS_DET		151
 #define SALSA_GPIO_HS_MIC_BIAS_EN	152
 
