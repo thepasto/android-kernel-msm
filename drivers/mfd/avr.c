@@ -44,6 +44,11 @@ struct avr_chip {
 	uint8_t firmware_version;
 	struct work_struct irq_work;
 
+	/* 11 registers are exported */
+	uint8_t state[11];
+	/* bit set/cleared means we have/don't have data in cache */
+	uint16_t state_set;
+
 	wait_queue_head_t wait;
 
 	/* For IRQ / suspend notifications */
@@ -54,6 +59,41 @@ struct avr_chip {
 #endif
 };
 
+static void avr_cache_clear(struct avr_chip *chip)
+{
+	chip->state_set = 0;
+}
+
+static int16_t avr_cache_get_value(struct avr_chip *chip, int reg)
+{
+	int bit;
+
+	/* 0x60 */
+	if (reg == I2C_REG_SENSITIVITY)
+		bit = 10;
+	else
+		bit = reg - 0xD0;
+
+	if (chip->state_set & (1 << bit))
+		return chip->state[bit];
+	else
+		return -1;
+}
+
+void avr_cache_set_value(struct avr_chip *chip, int reg, uint8_t val)
+{
+	int bit;
+
+	/* 0x60 */
+	if (reg == I2C_REG_SENSITIVITY)
+		bit = 10;
+	else
+		bit = reg - 0xD0;
+
+	chip->state[bit] = val;
+	chip->state_set |= 1 << bit;
+}
+
 static int __avr_write(struct avr_chip* chip, int reg, uint8_t val, int once)
 {
 	int res = -1;
@@ -61,6 +101,24 @@ static int __avr_write(struct avr_chip* chip, int reg, uint8_t val, int once)
 	struct i2c_client *client = chip->client;
 	uint8_t buf[2] = { (uint8_t)reg, (uint8_t)val };
 	int count = (val == -1) ? 1 : 2;
+	bool do_cache_val = false;
+
+	/* Special case for queries */
+	if (reg != I2C_REG_FW && reg != I2C_REG_KEY_STATUS) {
+		int16_t cur_val = avr_cache_get_value(chip, reg);
+
+		dev_dbg(chip->dev, "%s: < %02X %02X (have %d %02x)",
+				__func__, reg, val, cur_val, cur_val);
+
+		if (cur_val != -1 && cur_val == val) {
+			dev_dbg(chip->dev, "%s: Ignoring %02x write, "
+				"already %02x\n", __func__, reg, cur_val);
+			res = 0;
+			goto out;
+		}
+
+		do_cache_val = true;
+	}
 
 	while (retry-- > 0) {
 		if (count == i2c_master_send(client, buf, count )) {
@@ -78,6 +136,10 @@ static int __avr_write(struct avr_chip* chip, int reg, uint8_t val, int once)
 
 		msleep(200);
 	}
+
+out:
+	if (do_cache_val && !res)
+		avr_cache_set_value(chip, reg, val);
 
 	return res;
 }
@@ -172,6 +234,8 @@ static void avr_set_power_mode(struct avr_chip *chip, int mode)
 
 	if (avr_write(chip, I2C_REG_LOW_POWER, mode, 0))
 		dev_err(chip->dev, "%s: error setting mode", __func__);
+
+	avr_cache_clear(chip);
 }
 
 static void avr_irq_work_func(struct work_struct *work)
@@ -289,7 +353,7 @@ static int avr_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		goto error_avr_dev;
 	}
 
-	dev_info(chip->dev, "%s: avr intialized (FW 0x%x)\n", __func__,
+	dev_dbg(chip->dev, "%s: A1 AVR intialized (FW 0x%x)\n", __func__,
 			chip->firmware_version);
 	return 0;
 
