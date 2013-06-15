@@ -32,9 +32,6 @@
     /sys/class/switch/acer-hs/state to be updated.
 */
 
-
-#define DEBUG
-
 #include <linux/module.h>
 #include <linux/sysdev.h>
 #include <linux/interrupt.h>
