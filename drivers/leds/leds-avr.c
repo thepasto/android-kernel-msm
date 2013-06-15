@@ -58,6 +58,8 @@ struct avr_led {
 	struct work_struct work;
 
 	struct notifier_block notifier;
+
+	bool in_lpm;
 };
 
 static int avr_led_brightness_to_avr_val(int brightness, int max_brightness,
@@ -75,6 +77,11 @@ static void avr_led_work(struct work_struct *work)
 	mutex_lock(&avr_led_lock);
 
 	dev_dbg(led->dev, "%s: called\n", __func__);
+
+	if (led->in_lpm) {
+		dev_dbg(led->dev, "%s: ignoring work, in LPM\n", __func__);
+		goto out;
+	}
 
 	/* LCD */
 	if (led->flags & AVR_BL_CHANGED) {
@@ -102,6 +109,7 @@ static void avr_led_work(struct work_struct *work)
 
 	led->flags = 0;
 
+out:
 	dev_dbg(led->dev, "%s: exited\n", __func__);
 	mutex_unlock(&avr_led_lock);
 }
@@ -124,6 +132,12 @@ static void avr_led_brightness_set(struct led_classdev *led_cdev,
 	if (!led)
 		return;
 
+	if (led->in_lpm) {
+		dev_dbg(led->dev, "%s: in LPM, not updating %s brightness\n",
+				__func__, led_cdev->name);
+		return;
+	}
+
 	dev_dbg(led->dev, "%s: setting %s brightness to %d\n", __func__,
 			led_cdev->name, led_cdev->brightness);
 
@@ -141,9 +155,17 @@ static int avr_led_notifier_func(struct notifier_block *nb, unsigned long event,
 
 	dev_dbg(led->dev, "%s: received event %ld\n", __func__, event);
 
-	if (event == AVR_EVENT_LATERESUME) {
+	if (event == AVR_EVENT_POWER_LOW) {
+		dev_dbg(led->dev, "%s: switching to LPM\n", __func__);
+		led->in_lpm = true;
+	} else if (event == AVR_EVENT_POWER_NORMAL) {
+		dev_dbg(led->dev, "%s: switching to normal power mode\n",
+					__func__);
+		led->in_lpm = false;
 		/* Userspace does not do this for us for now */
 		led_set_brightness(&led->kp, DEFAULT_KP_BRIGHTNESS);
+		/* Since we are back from LPM, re-set current brightness level */
+		led_set_brightness(&led->bl, led->bl.brightness);
 	}
 
 	return NOTIFY_OK;

@@ -54,13 +54,11 @@ struct avr_chip {
 #endif
 };
 
-
 static int __avr_write(struct avr_chip* chip, int reg, uint8_t val, int once)
 {
 	int res = -1;
 	int retry = AVR_I2C_RETRY_COUNT;
 	struct i2c_client *client = chip->client;
-
 	uint8_t buf[2] = { (uint8_t)reg, (uint8_t)val };
 	int count = (val == -1) ? 1 : 2;
 
@@ -192,7 +190,7 @@ static void avr_early_suspend(struct early_suspend *h)
 	struct avr_chip *chip = container_of(h, struct avr_chip, early_suspend);
 	dev_dbg(&chip->client->dev, "%s: entered\n", __func__);
 
-	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_EARLYSUSPEND, NULL);
+	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_POWER_LOW, NULL);
 
 	disable_irq(chip->client->irq);
 	avr_set_power_mode(chip, AVR_POWER_LOW);
@@ -207,7 +205,7 @@ static void avr_late_resume(struct early_suspend *h)
 	avr_set_power_mode(chip, AVR_POWER_NORMAL);
 	enable_irq(chip->client->irq);
 
-	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_LATERESUME, NULL);
+	blocking_notifier_call_chain(&chip->notifier_list, AVR_EVENT_POWER_NORMAL, NULL);
 	dev_dbg(&chip->client->dev, "%s: exited\n", __func__);
 }
 #endif

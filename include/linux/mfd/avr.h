@@ -20,15 +20,14 @@
 #include <linux/mfd/core.h>
 
 /* Registers */
-#define I2C_REG_FW		0xD0
-#define I2C_REG_LED_1		0xD1
-/* I2C_REG_LED_2 is unused */
-#define I2C_REG_LED_2		0xD2
-#define I2C_REG_BL		0xD3
-#define I2C_REG_KEY_STATUS	0xD4
-#define I2C_REG_KEY_LOCK	0xD8
-#define I2C_REG_LOW_POWER	0xD9
-#define I2C_REG_SENSITIVITY	0x60
+#define I2C_REG_FW		0xD0	/* Firmware query */
+#define I2C_REG_LED_1		0xD1	/* Keypad LED */
+#define I2C_REG_LED_2		0xD2	/* Unknown */
+#define I2C_REG_BL		0xD3	/* LCD backlight */
+#define I2C_REG_KEY_STATUS	0xD4	/* Keypress status query */
+#define I2C_REG_KEY_LOCK	0xD8	/* Keyboard lock? */
+#define I2C_REG_LOW_POWER	0xD9	/* LPM switch */
+#define I2C_REG_SENSITIVITY	0x60	/* Keypad sensitivity */
 
 /* Power */
 #define AVR_POWER_NORMAL	0x00
@@ -36,8 +35,8 @@
 
 /* Notifiers */
 #define AVR_EVENT_IRQ		1
-#define AVR_EVENT_EARLYSUSPEND	2
-#define AVR_EVENT_LATERESUME	3
+#define AVR_EVENT_POWER_LOW	2
+#define AVR_EVENT_POWER_NORMAL	3
 
 struct avr_chip;
 
