@@ -36,13 +36,15 @@
 
 /* Kepad LEDs */
 #define MAX_KP_BRIGHTNESS	255
-#define DEFAULT_KP_BRIGHTNESS	16
+#define DEFAULT_KP_BRIGHTNESS	0
 #define AVR_KP_MAX_LVL		0x20
 #define AVR_KP_ON		AVR_KP_MAX_LVL
 #define AVR_KP_OFF		0x00
 
 #define AVR_BL_CHANGED		1
 #define AVR_KP_CHANGED		1 << 1
+
+#define AVR_KP_DIM_DELAY	10 * HZ
 
 struct mutex avr_led_lock;
 
@@ -56,6 +58,7 @@ struct avr_led {
 	int flags;
 
 	struct work_struct work;
+	struct delayed_work dim_work;
 
 	struct notifier_block notifier;
 
@@ -114,6 +117,15 @@ out:
 	mutex_unlock(&avr_led_lock);
 }
 
+static void avr_led_keypad_dim_work(struct work_struct *work)
+{
+	struct avr_led *led = container_of(to_delayed_work(work),
+					   struct avr_led, dim_work);
+
+	dev_dbg(led->dev, "%s: Shutting down KP LED\n", __func__);
+	led_set_brightness(&led->kp, 0);
+}
+
 static void avr_led_brightness_set(struct led_classdev *led_cdev,
 	                         enum led_brightness value)
 {
@@ -158,14 +170,17 @@ static int avr_led_notifier_func(struct notifier_block *nb, unsigned long event,
 	if (event == AVR_EVENT_POWER_LOW) {
 		dev_dbg(led->dev, "%s: switching to LPM\n", __func__);
 		led->in_lpm = true;
+		cancel_delayed_work(&led->dim_work);
 	} else if (event == AVR_EVENT_POWER_NORMAL) {
 		dev_dbg(led->dev, "%s: switching to normal power mode\n",
 					__func__);
 		led->in_lpm = false;
-		/* Userspace does not do this for us for now */
-		led_set_brightness(&led->kp, DEFAULT_KP_BRIGHTNESS);
 		/* Since we are back from LPM, re-set current brightness level */
 		led_set_brightness(&led->bl, led->bl.brightness);
+	} else if (event == AVR_EVENT_IRQ) {
+		/* Userspace does not do this for us for now */
+		led_set_brightness(&led->kp, MAX_KP_BRIGHTNESS);
+		schedule_delayed_work(&led->dim_work, AVR_KP_DIM_DELAY);
 	}
 
 	return NOTIFY_OK;
@@ -214,6 +229,7 @@ static int avr_led_probe(struct platform_device *pdev)
 	avr_notify_register(led->chip, &led->notifier);
 
 	INIT_WORK(&led->work, avr_led_work);
+	INIT_DELAYED_WORK(&led->dim_work, avr_led_keypad_dim_work);
 
 	mutex_init(&avr_led_lock);
 
