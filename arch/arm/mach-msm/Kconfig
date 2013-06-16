@@ -1001,13 +1001,12 @@ config ACER_VIBRATOR
 	default n
 	tristate "LA3R5-475AC"
 
-config ACER_HEADSET_BUTT
-	tristate "ACER Headset Button driver"
-	default n
-
 config ACER_HEADSET
-	tristate "ACER Headset detection driver"
+	tristate "Acer headset driver"
 	default y
+	help
+	  Enable support for Acer headset detection and headset
+	  button input.
 
 config CLOCK_BASED_SLEEP_LIMIT
 	default y
