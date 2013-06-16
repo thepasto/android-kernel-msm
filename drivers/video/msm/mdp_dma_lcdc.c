@@ -38,21 +38,6 @@
 #include "msm_fb.h"
 #include "mdp4.h"
 
-#if defined(CONFIG_MACH_ACER_A1)
-#include <mach/board.h>
-#include <mach/vreg.h>
-#include <linux/gpio.h>
-
-#define GPIO_LCD_RST  118
-#define LCD_RST_HI         gpio_set_value(GPIO_LCD_RST,1)
-#define LCD_RST_LO         gpio_set_value(GPIO_LCD_RST,0)
-
-extern int ReadID(void);
-
-static struct vreg *vreg_vdd;
-static struct vreg *vreg_vddio;
-#endif
-
 #ifdef CONFIG_FB_MSM_MDP40
 #define LCDC_BASE	0xC0000
 #define DTV_BASE	0xD0000
@@ -113,35 +98,6 @@ int mdp_lcdc_on(struct platform_device *pdev)
 	uint32 timer_base = LCDC_BASE;
 	uint32 block = MDP_DMA2_BLOCK;
 	int ret;
-
-#if defined(CONFIG_MACH_ACER_A1)
-	int rc = 0;
-
-	vreg_vdd = vreg_get(NULL, "gp5");
-	vreg_vddio = vreg_get(NULL, "gp1");
-
-	if ((lcm_id < 2) && (hw_version <= 2))
-		rc = vreg_set_level(vreg_vddio, 1800);
-	else
-		rc = vreg_set_level(vreg_vddio, 2600);
-	if (!rc)
-		rc = vreg_enable(vreg_vddio);
-	if (rc)
-		printk(KERN_ERR "%s: return val: %d \n",
-				__func__, rc);
-	pr_debug("%s GP1 Enabled[2600]\n", __func__);
-
-	if (lcm_id < 2)
-		rc = vreg_set_level(vreg_vdd, 2400); /* CUT 1.1 */
-	else
-		rc = vreg_set_level(vreg_vdd, 2800);
-	if (!rc)
-		rc = vreg_enable(vreg_vdd);
-	if (rc)
-		printk(KERN_ERR "%s: return val: %d \n",
-				__func__, rc);
-	pr_debug("%s GP5 Enabled[2400]\n", __func__);
-#endif
 
 	mfd = (struct msm_fb_data_type *)platform_get_drvdata(pdev);
 
@@ -370,14 +326,6 @@ int mdp_lcdc_off(struct platform_device *pdev)
 	/* delay to make sure the last frame finishes */
 	mdelay(100);
 
-#if defined(CONFIG_MACH_ACER_A1)
-	vreg_disable(vreg_vdd);
-	pr_debug("%s GP5 Disabled\n", __func__);
-	vreg_disable(vreg_vddio);
-	pr_debug("%s GP1 Disabled\n", __func__);
-
-	LCD_RST_LO;
-#endif
 	return ret;
 }
 

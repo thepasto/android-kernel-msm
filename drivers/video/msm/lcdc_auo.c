@@ -16,9 +16,6 @@
  * along with this program; if not, you can find it at http://www.fsf.org
  */
 
-#if defined(CONFIG_ACER_DEBUG)
-#define DEBUG
-#endif
 #include <linux/gpio.h>
 #include "msm_fb.h"
 #include <linux/syscalls.h>
@@ -41,11 +38,6 @@
 #define GPIO_SPI_DI   133
 #define GPIO_SPI_CS   134
 
-/* FIXME: In DVT, it controls AVR, keypad backlight and LCM backlight.
- * We should negotiate w/ AVR for the on/off procedure */
-#ifdef CONFIG_MACH_Q8K_A1_EVT
-#define GPIO_BLPWM    144
-#endif
 #define GPIO_PCLK     135
 #define GPIO_VSYNC    136
 #define GPIO_HSYNC    137
@@ -76,137 +68,10 @@
 #define CMD_DELAY   0xFF
 #define CMD_P2800   0xFD
 
-int PowerOn2800(void)
-{
-	struct vreg *vreg_vdd;
-	struct vreg *vreg_vddio;
-
-	int rc = 0;
-
-	vreg_vdd = vreg_get(NULL, "gp5");
-	vreg_vddio = vreg_get(NULL, "gp1");
-
-	if ((lcm_id < 2) && (hw_version <= 2))
-		rc = vreg_set_level(vreg_vddio, 1800);
-	else
-		rc = vreg_set_level(vreg_vddio, 2600);
-	if (!rc)
-		rc = vreg_enable(vreg_vddio);
-	if (rc)
-		printk(KERN_ERR "%s: return val: %d \n",
-				__func__, rc);
-	pr_debug("%s GP1 VDDIO Enabled[2600]\n", __func__);
-
-	rc = vreg_set_level(vreg_vdd, 2800);
-	if (!rc)
-		rc = vreg_enable(vreg_vdd);
-	if (rc)
-		printk(KERN_ERR "%s: return val: %d \n",
-				__func__, rc);
-	pr_debug("%s GP5 VDD Enabled[2800]\n", __func__);
-
-	return 0;
-}
+static struct vreg *vreg_vdd;
+static struct vreg *vreg_vddio;
 
 static unsigned char auo_poweron_sequence[] = {
-	/* CUT1.1/DVT3/DVT4 */
-	/* VGH/VGL/Bias */
-	CMD_DI_LO,       0xC1,
-	CMD_DI_HI,       0xA8,
-	CMD_DI_HI,       0x80,
-	CMD_DI_HI,       0x12,
-	CMD_DI_HI,       0x00,
-	/* Sleep out */
-	CMD_DI_LO,       0x11,
-	/* 120 ms */
-	CMD_DELAY,       120,
-	/* CKV bug */
-	CMD_DI_LO,       0xFF,
-	CMD_DI_HI,       0x80,
-	CMD_DI_HI,       0x01,
-	/* CKV bug */
-	CMD_DI_LO,       0xFC,
-	CMD_DI_HI,       0x40,
-	CMD_DI_HI,       0x01,
-	/* VGH/VGL/Bias */
-	CMD_DI_LO,       0xC1,
-	CMD_DI_HI,       0xA8,
-	CMD_DI_HI,       0x86,
-	CMD_DI_HI,       0x12,
-	CMD_DI_HI,       0x00,
-	/* 100 ms */
-	CMD_DELAY,       100,
-	/* VCOMDC */
-	CMD_DI_LO,       0xC5,
-	CMD_DI_HI,       0x80,
-	CMD_DI_HI,       0x69,
-	/* GVDD */
-	CMD_DI_LO,       0xC6,
-	CMD_DI_HI,       0xAB,
-	CMD_DI_HI,       0x84,
-	/* NGVDD */
-	CMD_DI_LO,       0xC7,
-	CMD_DI_HI,       0xAB,
-	CMD_DI_HI,       0x84,
-	/* Gamma from reg */
-	CMD_DI_LO,       0xF2,
-	CMD_DI_HI,       0x00,
-	CMD_DI_HI,       0x00,
-	CMD_DI_HI,       0x82,
-	/* Gamma curve */
-	CMD_DI_LO,       0x26,
-	CMD_DI_HI,       0x08,
-	/* Gamma 2.2 R+ */
-	CMD_DI_LO,       0xE0,
-	CMD_DI_HI,       0x00,
-	CMD_DI_HI,       0x05,
-	CMD_DI_HI,       0x0A,
-	CMD_DI_HI,       0x0D,
-	CMD_DI_HI,       0x0E,
-	CMD_DI_HI,       0x0F,
-	CMD_DI_HI,       0x0C,
-	CMD_DI_HI,       0x0B,
-	CMD_DI_HI,       0x02,
-	CMD_DI_HI,       0x06,
-	CMD_DI_HI,       0x0E,
-	CMD_DI_HI,       0x15,
-	CMD_DI_HI,       0x15,
-	CMD_DI_HI,       0x25,
-	CMD_DI_HI,       0x18,
-	CMD_DI_HI,       0x01,
-	/* Gamma 2.2 R- */
-	CMD_DI_LO,       0xE1,
-	CMD_DI_HI,       0x00,
-	CMD_DI_HI,       0x05,
-	CMD_DI_HI,       0x0A,
-	CMD_DI_HI,       0x0D,
-	CMD_DI_HI,       0x0E,
-	CMD_DI_HI,       0x0F,
-	CMD_DI_HI,       0x0C,
-	CMD_DI_HI,       0x0B,
-	CMD_DI_HI,       0x02,
-	CMD_DI_HI,       0x06,
-	CMD_DI_HI,       0x0E,
-	CMD_DI_HI,       0x15,
-	CMD_DI_HI,       0x15,
-	CMD_DI_HI,       0x25,
-	CMD_DI_HI,       0x18,
-	CMD_DI_HI,       0x01,
-	/* Gamma curve */
-	CMD_DI_LO,       0x26,
-	CMD_DI_HI,       0x08,
-	/* COLMOD */
-	CMD_DI_LO,       0x3A,
-	CMD_DI_HI,       0x50,
-	CMD_P2800,       0x00,
-	/* 120 ms */
-	CMD_DELAY,       120,
-	/* Display ON */
-	CMD_DI_LO,       0x29,
-	CMD_END,
-};
-
-static unsigned char auo_poweron_sequence_2_0[] = {
 	/* CUT2.0/PVT */
 	/* Sleep out */
 	CMD_DI_LO,       0x11,
@@ -314,10 +179,6 @@ void auo_gpio_init(void)
 		pr_err("failed to request gpio spi_di\n");
 	if (gpio_request(GPIO_SPI_CS, "spi_cs"))
 		pr_err("failed to request gpio spi_cs\n");
-#ifdef CONFIG_MACH_Q8K_A1_EVT
-	if (gpio_request(GPIO_BLPWM, "blpwm"))
-		pr_err("failed to request gpio blpwm\n");
-#endif
 	if (gpio_request(GPIO_PCLK, "pclk"))
 		pr_err("failed to request gpio pclk\n");
 	if (gpio_request(GPIO_VSYNC, "vsync"))
@@ -327,23 +188,17 @@ void auo_gpio_init(void)
 	if (gpio_request(GPIO_VDEN, "blpwm"))
 		pr_err("failed to request gpio vden\n");
 
-	//HWIO_OUTM(GPIO1SH1_OE_5, 0x4000, 0x4000);
 	gpio_output_enable(GPIO_LCD_RST, 1);
 	gpio_set_value(GPIO_LCD_RST, 1);
-	//HWIO_OUTM(GPIO1SH1_OE_6,0x8001c00,0x8001c00);
+
 	gpio_output_enable(GPIO_SPI_CLK,1);   //0x400
 	gpio_output_enable(GPIO_SPI_DI, 1);   //0x800
 	gpio_output_enable(GPIO_SPI_CS, 1);   //0x1000
-#ifdef CONFIG_MACH_Q8K_A1_EVT
-	gpio_output_enable(GPIO_BLPWM,  1);   //0x8000000
-#endif
 
-#ifdef CONFIG_MACH_Q8K_A1_EVT
-	gpio_set_value(GPIO_BLPWM,   1);  //BackLight panel
-#endif
 	gpio_set_value(GPIO_SPI_CS,  1);  //@@ AUO LCM
 	gpio_set_value(GPIO_SPI_CLK, 0);
 	gpio_set_value(GPIO_SPI_DI,  0);
+
 	gpio_tlmm_config(GPIO_CFG(GPIO_PCLK, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
 	gpio_tlmm_config(GPIO_CFG(GPIO_VSYNC, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
 	gpio_tlmm_config(GPIO_CFG(GPIO_HSYNC, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
@@ -383,24 +238,39 @@ void spi_gen(unsigned char spi_cmd, unsigned char spi_data)
 		}
 		LCD_SPI_CS_HI;
 	} else if ( spi_cmd == CMD_DELAY ) {
-		// delay
 		LCD_SPI_CS_HI;
 		LCD_SPI_SET_DI(1);
 		LCD_SPI_CLK_LO;
 		mdelay(spi_data); //?ms
-	} else if ( spi_cmd == CMD_P2800 ) {
-		PowerOn2800();
 	} else {
 		pr_err("lcdc_auo: command = 0x%x is not supported\n", spi_cmd);
 	}
 }
 
 /* AUO LCM power on/off SPI commands */
-void panel_poweron(int bOnOff)
+void panel_poweron(int on)
 {
 	unsigned char *ptr;
 
-	if (bOnOff == 1) {
+	if (on) {
+		int rc = 0;
+
+		rc = vreg_set_level(vreg_vddio, 2600);
+		if (!rc)
+			rc = vreg_enable(vreg_vddio);
+		if (rc)
+			printk(KERN_ERR "%s: return val: %d \n",
+					__func__, rc);
+		pr_debug("%s GP1 Enabled[2600]\n", __func__);
+
+		rc = vreg_set_level(vreg_vdd, 2800);
+		if (!rc)
+			rc = vreg_enable(vreg_vdd);
+		if (rc)
+			printk(KERN_ERR "%s: return val: %d \n",
+					__func__, rc);
+		pr_debug("%s GP5 Enabled[2800]\n", __func__);
+
 		/* Start Power on sequence*/
 		LCD_RST_HI;
 		mdelay(1);
@@ -410,35 +280,42 @@ void panel_poweron(int bOnOff)
 		mdelay(120);
 		LCD_SPI_CS_HI;
 		mdelay(1);
+
 		gpio_tlmm_config(GPIO_CFG(GPIO_PCLK, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
 		gpio_tlmm_config(GPIO_CFG(GPIO_VSYNC, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
 		gpio_tlmm_config(GPIO_CFG(GPIO_HSYNC, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
 		gpio_tlmm_config(GPIO_CFG(GPIO_VDEN, 1, GPIO_OUTPUT,	GPIO_PULL_DOWN, GPIO_8MA), GPIO_ENABLE);
-		/* assign power-on table */
-		if (lcm_id < 2)
-			ptr = auo_poweron_sequence;
-		else
-			ptr = auo_poweron_sequence_2_0;
+
+		ptr = auo_poweron_sequence;
 	} else {
-		/* assign power-off table */
 		ptr = auo_poweroff_sequence;
 	}
-	while( *ptr != CMD_END) {
-		spi_gen(*ptr,*(ptr+1));
+
+	while (*ptr != CMD_END) {
+		spi_gen(*ptr, *(ptr+1));
 		ptr += 2;
 	}
-	if (!bOnOff)
+
+	if (!on) {
 		LCD_SPI_CS_LO;
+		LCD_RST_LO;
+
+		gpio_tlmm_config(GPIO_CFG(GPIO_PCLK, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
+		gpio_tlmm_config(GPIO_CFG(GPIO_VSYNC, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
+		gpio_tlmm_config(GPIO_CFG(GPIO_HSYNC, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
+		gpio_tlmm_config(GPIO_CFG(GPIO_VDEN, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
+
+		vreg_disable(vreg_vdd);
+		pr_debug("%s GP5 Disabled\n", __func__);
+		vreg_disable(vreg_vddio);
+		pr_debug("%s GP1 Disabled\n", __func__);
+	}
 }
 
-/* TODO Implement auo panel on/off, backlight functions */
 static int lcdc_auo_panel_on(struct platform_device *pdev)
 {
 	pr_debug("%s ++ entering\n", __func__);
 	panel_poweron(1);
-#ifdef CONFIG_MACH_Q8K_A1_EVT
-	gpio_set_value(GPIO_BLPWM,1);  //backlight power on
-#endif
 	pr_debug("%s -- leaving\n", __func__);
 	return 0;
 }
@@ -447,13 +324,6 @@ static int lcdc_auo_panel_off(struct platform_device *pdev)
 {
 	pr_debug("%s ++ entering\n", __func__);
 	panel_poweron(0);
-#ifdef CONFIG_MACH_Q8K_A1_EVT
-	gpio_set_value(GPIO_BLPWM,0);  //backlight power off
-#endif
-	gpio_tlmm_config(GPIO_CFG(GPIO_PCLK, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
-	gpio_tlmm_config(GPIO_CFG(GPIO_VSYNC, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
-	gpio_tlmm_config(GPIO_CFG(GPIO_HSYNC, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
-	gpio_tlmm_config(GPIO_CFG(GPIO_VDEN, 0, GPIO_INPUT,	GPIO_PULL_DOWN, GPIO_2MA), GPIO_DISABLE);
 	pr_debug("%s -- leaving\n", __func__);
 	return 0;
 }
@@ -464,7 +334,7 @@ static int __devinit lcdc_auo_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_driver this_driver = {
+static struct platform_driver lcd_auo_driver = {
 	.probe = lcdc_auo_probe,
 	.driver = {
 		.name	= "lcdc_auo_wvga",
@@ -477,7 +347,7 @@ static struct msm_fb_panel_data lcdc_auo_panel_data = {
 };
 
 
-static struct platform_device this_device = {
+static struct platform_device lcd_auo_device  = {
 	.name	= "lcdc_auo_wvga",
 	.id	= 1,
 	.dev    = {
@@ -490,6 +360,13 @@ static int __init lcdc_auo_init(void)
 	int ret;
 	struct msm_panel_info *pinfo;
 
+	if (lcm_id < 2) {
+		pr_err("%s: LCD Module v%d is no longer supported\n",
+			__func__, lcm_id);
+		ret = -ENODEV;
+		goto err_out;
+	}
+
 #ifdef CONFIG_FB_MSM_TRY_MDDI_CATCH_LCDC_PRISM
 	ret = msm_fb_detect_client("lcdc_auo_wvga");
 	if (ret == -ENODEV)
@@ -498,9 +375,9 @@ static int __init lcdc_auo_init(void)
 	if (ret && (mddi_get_client_id() != 0))
 		return 0;
 #endif
-	ret = platform_driver_register(&this_driver);
+	ret = platform_driver_register(&lcd_auo_driver);
 	if (ret)
-		return ret;
+		goto err_out;
 
 	pinfo = &lcdc_auo_panel_data.panel_info;
 	pinfo->xres = 480;
@@ -522,14 +399,19 @@ static int __init lcdc_auo_init(void)
 	pinfo->lcdc.underflow_clr = 0xff;	/* blue */
 	pinfo->lcdc.hsync_skew = 0;
 
-	ret = platform_device_register(&this_device);
+	vreg_vdd = vreg_get(NULL, "gp5");
+	vreg_vddio = vreg_get(NULL, "gp1");
+
+	ret = platform_device_register(&lcd_auo_device);
 	if (ret) {
-		platform_driver_unregister(&this_driver);
-	}
-	else {
-		auo_gpio_init();
+		platform_driver_unregister(&lcd_auo_driver);
+		goto err_out;
 	}
 
+	auo_gpio_init();
+	return 0;
+
+err_out:
 	return ret;
 }
 
