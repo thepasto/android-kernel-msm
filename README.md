@@ -7,12 +7,15 @@ commit `5bfad4e19237da65af877d376727b2bef90b0950`.
 See [froyo_almond on Acer Liquid E][2] blog post for more information.
 This kernel will boot with stock Acer 2.2 userspace but will fail to
 bring the Android UI - you will need updated lights.salsa, vold and
-libaudio, libaudiopolicy, libacer_acoustic.so and TPA2018.csv
-from [Acer A1 device tree][3]. You will also
+libaudio, libaudiopolicy, libacer_acoustic.so, TPA2018.csv, and keyboard
+configuration from [Acer A1 device tree][3]. You will also
 need libmedia, libmedia_jni.so, libaudioflinger.so from froyo_almond
 codeaurora tree.
 
 Default configuration is in `arch/arm/configs/salsa_defconfig`.
+
+Pre-built images based on Acer_LiquidE_4.008.08_EMEA_VFIT are available
+[here][4].
 
 Upstream patches cherry-picked:
 
@@ -59,3 +62,4 @@ Upstream patches reverted:
 [1]: git://codeaurora.org/quic/la/kernel/msm
 [2]: http://rtg.in.ua/2013/05/29/froyo_almond-on-acer-liquid-e/
 [3]: https://github.com/roman-yepishev/android-device-acer-a1
+[4]: http://yadi.sk/d/evctd6V25hnau
