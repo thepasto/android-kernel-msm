@@ -66,19 +66,8 @@
 /* 
  * Compatibility with old userspace in the switch device.
  *
- * Old userspace expects NO_MIC state to be 2, while internal state would
- * instead use bits in a single integer:
- *
- * No device: 0
- * Inserted with mic: 3
- * Inserted without mic: 1
- *
- * 0000 00BA
- *        ^^-- Plug in state
- *        `--- Mic state
- *
- * This is visible only in the switch device UEvents and sysfs file and can be
- * removed once the HeadsetObserver is updated.
+ * Old userspace expects integer value, not a string. I plan to have userspace
+ * actually compare a descriptive string.
  */
 #define ACER_HEADSET_API_COMPAT
 
@@ -122,34 +111,26 @@ struct acer_headset {
 static ssize_t acer_headset_switch_print_name(struct switch_dev *sdev,
 					      char *buf)
 {
-	int state = switch_get_state(sdev);
-#ifdef ACER_HEADSET_API_COMPAT
-	switch (state) {
-		case ACER_HEADSET_DEVICE_UNPLUGGED:
-			return sprintf(buf, "Unplugged\n");
-		case ACER_HEADSET_COMPAT_PLUGGED_IN:
-			return sprintf(buf, "Headset with microphone\n");
-		case ACER_HEADSET_COMPAT_NO_MIC:
-			return sprintf(buf, "Headset without microphone\n");
-	}
-	return -EINVAL;
-#else
-	if (state & ACER_HEADSET_DEVICE_PLUGGED_IN) {
-		if (state & ACER_HEADSET_DEVICE_HAS_MIC)
-			return sprintf(buf, "Headset with microphone\n");
-		else
-			return sprintf(buf, "Headset without microphone\n");
-	}
-	else {
-		return sprintf(buf, "Unplugged\n");
-	}
-#endif
+	return sprintf(buf, "%s\n", ACER_HEADSET_DRIVER_NAME);
 }
 
 static ssize_t acer_headset_switch_print_state(struct switch_dev *sdev,
 					       char *buf)
 {
-	return sprintf(buf, "%d\n", switch_get_state(sdev));
+	int state = switch_get_state(sdev);
+#ifdef ACER_HEADSET_API_COMPAT
+	return sprintf(buf, "%d\n", state);
+#else
+	if (state & ACER_HEADSET_DEVICE_PLUGGED_IN) {
+		if (state & ACER_HEADSET_DEVICE_HAS_MIC)
+			return sprintf(buf, "PLUGGED_IN HAS_MIC\n");
+		else
+			return sprintf(buf, "PLUGGED_IN\n");
+	}
+	else {
+		return sprintf(buf, "UNPLUGGED\n");
+	}
+#endif
 }
 
 static void acer_headset_reset_state_work(struct work_struct *work)
