@@ -63,7 +63,7 @@
 #define ACER_HEADSET_DEVICE_PLUGGED_IN		1
 #define ACER_HEADSET_DEVICE_HAS_MIC		2
 
-/* 
+/*
  * Compatibility with old userspace in the switch device.
  *
  * Old userspace expects integer value, not a string. I plan to have userspace
@@ -106,7 +106,6 @@ struct acer_headset {
 	/* Enable MIC_BIAS_EN halfway through detection debounce */
 	struct delayed_work hs_bt_enable_sensing_work;
 };
-
 
 static ssize_t acer_headset_switch_print_name(struct switch_dev *sdev,
 					      char *buf)
@@ -182,7 +181,6 @@ static void acer_headset_hs_det_settled_func(struct work_struct *work)
 		gpio_set_value(headset->gpio_hs_mic_bias_en, 0);
 	}
 
-
 #ifdef DEBUG
 	dev_dbg(headset->dev, "%s: Current state:\n", __func__);
 	if (headset->state) {
@@ -198,7 +196,7 @@ static void acer_headset_hs_det_settled_func(struct work_struct *work)
 	}
 #endif
 
-#ifdef ACER_HEADSET_API_COMPAT	
+#ifdef ACER_HEADSET_API_COMPAT
 	/* API compatibility */
 	if (headset->state) {
 		if (headset->state & ACER_HEADSET_DEVICE_HAS_MIC)
@@ -297,7 +295,7 @@ static int acer_headset_probe(struct platform_device *pdev)
 								__func__);
 		return -EINVAL;
 	}
-	
+
 	headset = kzalloc(sizeof(*headset), GFP_KERNEL);
 	if (!headset)
 		return -ENOMEM;
@@ -325,9 +323,8 @@ static int acer_headset_probe(struct platform_device *pdev)
 	headset->hs_bt_event_timer.function = acer_headset_hs_bt_event_func;
 
 	headset->hs_bt_event_debounce_time = ktime_set(0,
-					ACER_HEADSET_HS_BT_DEBOUNCE_TIME); 
+					ACER_HEADSET_HS_BT_DEBOUNCE_TIME);
 
-	
 	/* GPIOs */
 	ret = gpio_request(headset->gpio_hs_det, "HS_DET");
 	if (ret < 0) {
@@ -418,7 +415,6 @@ static int acer_headset_probe(struct platform_device *pdev)
 		goto err_request_irq_hs_bt;
 	}
 
-
 	dev_dbg(&pdev->dev, "%s: probe done\n", __func__);
 
 	return 0;
@@ -470,7 +466,7 @@ static int acer_headset_remove(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, NULL);
 	kfree(headset);
-	
+
 	return 0;
 }
 

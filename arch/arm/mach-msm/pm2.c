@@ -1026,7 +1026,7 @@ static int msm_pm_power_collapse
 #ifdef CONFIG_MACH_ACER_A1
 	acer_smem_set_os_pwr_state(from_idle ? ACER_OS_IDLE_MODE : ACER_OS_SUSPEND_MODE);
 	pr_debug("%s: power state = %s\n", __func__,
-			(from_idle ? "ACER_OS_IDLE_MODE" : "ACER_OS_SUSPEND_MODE")); 
+			(from_idle ? "ACER_OS_IDLE_MODE" : "ACER_OS_SUSPEND_MODE"));
 #endif
 
 	saved_vector[0] = msm_pm_reset_vector[0];

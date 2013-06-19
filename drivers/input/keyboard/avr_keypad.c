@@ -46,7 +46,7 @@ enum layout_type_t {
 	 * AVR_KEY_BACK - KEY_KBDILLUMDOWN (0xE5) mapped to MENU
 	 */
 	AVR_LAYOUT_TYPE_A,
-	/* 
+	/*
 	 * AVR_KEY_MENU	- KEY_HOME
 	 * AVR_KEY_LEFT - KEY_SEARCH.
 	 * AVR_KEY_DOWN - KEY_BACK
@@ -62,7 +62,7 @@ struct avr_keypad {
 	enum layout_type_t	layout_type;
 	struct notifier_block   notifier;
 
-	bool	sensitivity_cap; 
+	bool	sensitivity_cap;
 	uint8_t threshold;
 
 	int last_key;
@@ -88,7 +88,7 @@ int avr_keypad_threshold_update(struct avr_keypad *keypad,
 	}
 
 	keypad->threshold = (uint8_t)value;
-	
+
 	return 0;
 }
 
@@ -103,7 +103,7 @@ static ssize_t avr_keypad_threshold_set(struct device *device,
 	res = strict_strtol(buf, 10, &value);
 	if (res) {
 	    dev_err(keypad->dev, "%s: invalid value %s\n", __func__, buf);
-	    value = AVR_KEYPAD_THRESHOLD_DEFAULT; 
+	    value = AVR_KEYPAD_THRESHOLD_DEFAULT;
 	}
 
 	if (avr_keypad_threshold_update(keypad, value)) {
@@ -219,7 +219,7 @@ static int __devinit avr_keypad_probe(struct platform_device *pdev)
 	struct avr_chip *chip;
 	int rc;
 	int firmware_version;
-	
+
 	chip = platform_get_drvdata(pdev);
 	if (chip == NULL) {
 		dev_err(&pdev->dev, "no parent data passed in\n");

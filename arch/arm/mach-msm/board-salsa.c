@@ -1725,4 +1725,3 @@ MACHINE_START(ACER_A1, "salsa")
 	.init_machine = qsd8x50_init,
 	.timer = &msm_timer,
 MACHINE_END
-

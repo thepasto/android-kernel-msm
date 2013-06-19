@@ -345,7 +345,7 @@ static int avr_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	}
 
 	for (i = 0; i < pdata->num_subdevs; i++)
-		pdata->sub_devices[i].driver_data = chip;	
+		pdata->sub_devices[i].driver_data = chip;
 	rc = mfd_add_devices(chip->dev, -1, pdata->sub_devices,
 			     pdata->num_subdevs, NULL, 0);
 	if (rc) {
