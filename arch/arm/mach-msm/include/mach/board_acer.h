@@ -134,6 +134,12 @@ typedef struct {
 	unsigned char			os_sw_version[32];
 } acer_smem_flag_t;
 
+/* Hardware Revision, defined in arch/arm/mach-msm/board-salsa.c */
+extern unsigned acer_hw_version;
+
+/* LCD Module Revision, defined in arch/arm/mach-msm/board-salsa.c */
+extern unsigned acer_lcm_id;
+
 /* Interface to SMEM structure */
 int acer_smem_init(void);
 void acer_smem_set_os_pwr_state(acer_os_pwr_state_t state);

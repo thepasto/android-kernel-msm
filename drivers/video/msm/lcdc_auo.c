@@ -23,7 +23,7 @@
 #include <linux/sched.h>
 #include <mach/../../proc_comm.h>
 #include <mach/vreg.h>
-#include <mach/board.h>
+#include <mach/board_acer.h>
 #include <linux/spinlock.h>
 /* FIXME CONFIG_FB_MDDI_CATCH_LCDC_PRISM is incorrect. */
 
@@ -360,9 +360,9 @@ static int __init lcdc_auo_init(void)
 	int ret;
 	struct msm_panel_info *pinfo;
 
-	if (lcm_id < 2) {
+	if (acer_lcm_id < 2) {
 		pr_err("%s: LCD Module v%d is no longer supported\n",
-			__func__, lcm_id);
+			__func__, acer_lcm_id);
 		ret = -ENODEV;
 		goto err_out;
 	}

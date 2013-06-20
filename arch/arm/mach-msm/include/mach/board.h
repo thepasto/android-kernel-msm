@@ -281,15 +281,6 @@ void msm_snddev_tx_route_deconfig(void);
 
 extern unsigned int msm_shared_ram_phys; /* defined in arch/arm/mach-msm/io.c */
 
-#if defined(CONFIG_MACH_ACER_A1)
-#define MAX_AMSS_LEN    15
-#define MAX_USBSN_LEN   32
-extern unsigned hw_version;
-extern unsigned lcm_id;
-extern unsigned test_mode;
-extern unsigned boot_in_recovery;
-#endif
-
 #if defined(CONFIG_TOUCHSCREEN_AUO_H353)
 struct auo_platform_data {
 	int gpio;

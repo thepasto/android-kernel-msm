@@ -263,7 +263,7 @@ static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 		charger_type = ACER_CHARGER_TYPE_AC;
 	} else {
 		/* HW 0.5 ID pin always low, only USB charging */
-		if (hw_version != ACER_HW_VERSION_0_5) {
+		if (acer_hw_version != ACER_HW_VERSION_0_5) {
 			if ((readl(USB_OTGSC) & OTGSC_ID) != OTGSC_ID)
 				/* ID Pin Low */
 				charger_type = ACER_CHARGER_TYPE_AC;

@@ -155,28 +155,27 @@ int wifi_set_carddetect(int val);
 #define FPGA_SDCC_STATUS	0x70000280
 
 /* Global Acer variables */
-unsigned hw_version		= 0;
-unsigned lcm_id			= 0;
-unsigned boot_in_recovery	= 0;
+unsigned acer_hw_version	= 0;
+unsigned acer_lcm_id		= 0;
 
 #define RECOVERY_STRING "recovery"
 #define OS_STRING "OS000000"
 
-static int __init hw_version_setup(char *version)
+static int __init acer_hw_version_setup(char *version)
 {
-	hw_version=(version[0]-'0');
-	pr_debug("hw_version=%d\n",hw_version);
+	acer_hw_version = version[0] - '0';
+	pr_debug("acer_hw_version = %d\n", acer_hw_version);
 	return 1;
 }
-__setup("hw_ver=", hw_version_setup);
+__setup("hw_ver=", acer_hw_version_setup);
 
-static int __init lcm_id_setup(char *id)
+static int __init acer_lcm_id_setup(char *id)
 {
-	lcm_id=(id[0]-'0');
-	pr_debug("lcm_id=%d\n",lcm_id);
+	acer_lcm_id = id[0] - '0';
+	pr_debug("acer_lcm_id = %d\n", acer_lcm_id);
 	return 1;
 }
-__setup("lcm_id=", lcm_id_setup);
+__setup("lcm_id=", acer_lcm_id_setup);
 
 #ifdef CONFIG_USB_ANDROID
 static struct usb_mass_storage_platform_data mass_storage_pdata = {
@@ -485,7 +484,7 @@ static void __init audio_gpio_init(void)
 {
 	int pin, rc;
 
-	if(hw_version >= 3){
+	if(acer_hw_version >= 3){
 		for (pin = 0; pin < ARRAY_SIZE(audio_gpio_on_v03); pin++) {
 			rc = gpio_tlmm_config(audio_gpio_on_v03[pin],
 				GPIO_ENABLE);
@@ -589,7 +588,7 @@ static void __init compass_gpio_init(void)
 	mdelay(100);
 	gpio_set_value(SALSA_GPIO_MS3C_RST, 1);
 
-	if (hw_version >= 3){
+	if (acer_hw_version >= 3){
 		rc = gpio_request(SALSA_GPIO_MS3C_PWR_EN, "CP_PWR");
 		if (rc) {
 			pr_err("Yamaha MS-3C gpio_request failed\n");
@@ -815,7 +814,7 @@ static void __init wlan_init(void)
         return;
     }
 
-    if (hw_version < 3) {
+    if (acer_hw_version < 3) {
         /* units of mV, steps of 50 mV */
         rc = vreg_set_level(vreg, 2500);
         if (rc) {

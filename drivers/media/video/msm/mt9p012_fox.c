@@ -63,6 +63,7 @@
 #define MT9P012_REV_7
 
 #if defined(CONFIG_MACH_ACER_A1)
+#include <mach/board_acer.h>
 #include <mach/vreg.h>
 #define USE_EEPROM
 #endif
@@ -1421,7 +1422,7 @@ static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 	msleep(1);
 	vreg_enable(gp2);
 
-	if (hw_version >= 3)
+	if (acer_hw_version >= 3)
 		gpio_direction_output(data->sensor_pwd, 1);
 
 	/* enable mclk first */
@@ -1673,7 +1674,7 @@ int mt9p012_sensor_release(void)
 
 #ifdef CONFIG_MACH_ACER_A1
 	// turn off the power rails of the sensor module
-	if (hw_version >= 3)
+	if (acer_hw_version >= 3)
 		gpio_direction_output(mt9p012_ctrl->sensordata->sensor_pwd, 0);
 
 	gp2 = vreg_get(0, "gp2");
@@ -1766,7 +1767,7 @@ static int mt9p012_sensor_probe(const struct msm_camera_sensor_info *info,
 	msleep(1);
 	vreg_enable(gp2);
 
-	if (hw_version >= 3)
+	if (acer_hw_version >= 3)
 		gpio_direction_output(info->sensor_pwd, 1);
 #endif
 
@@ -1795,7 +1796,7 @@ static int mt9p012_sensor_probe(const struct msm_camera_sensor_info *info,
 
 #ifdef CONFIG_MACH_ACER_A1
 	// turn off the power rails of the sensor module
-	if (hw_version >= 3)
+	if (acer_hw_version >= 3)
 		gpio_direction_output(info->sensor_pwd, 0);
 
 	vreg_disable(gp3);
