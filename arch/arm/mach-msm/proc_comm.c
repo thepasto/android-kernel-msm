@@ -37,9 +37,6 @@
 #define MSM_TRIG_A2M_PC_INT (writel(1, MSM_CSR_BASE + 0x400 + (6) * 4))
 #endif
 
-#ifdef CONFIG_MACH_ACER_A1
-extern int smemlog_initialized;
-#endif
 static inline void notify_other_proc_comm(void)
 {
 	MSM_TRIG_A2M_PC_INT;
