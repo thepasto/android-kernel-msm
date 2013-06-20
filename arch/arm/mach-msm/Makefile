@@ -43,7 +43,7 @@ obj-$(CONFIG_ARCH_QSD8X50) += sirc.o
 obj-$(CONFIG_MSM_FIQ_SUPPORT) += fiq_glue.o
 obj-$(CONFIG_MACH_TROUT) += board-trout-rfkill.o
 obj-$(CONFIG_MACH_ACER_A1) += board-salsa.o board-salsa-tpa2018d1.o wifi-power.o
-obj-$(CONFIG_MACH_ACER_A1) += board-salsa-smem.o
+obj-$(CONFIG_MACH_ACER_A1) += board-salsa-smem.o board-salsa-keypad.o
 obj-$(CONFIG_MSM_SDIO_AL) += sdio_al.o
 obj-$(CONFIG_MSM_SDIO_AL_TEST) += sdio_al_test.o
 obj-$(CONFIG_MSM_SMD) += smd.o smd_debug.o remote_spinlock.o socinfo.o
@@ -149,6 +149,5 @@ endif
 obj-$(CONFIG_MSM7200A_TLMM)	+= tlmm-msm7200a.o
 obj-$(CONFIG_MSM8660_TLMM)	+= tlmm-msm8660.o msm8660-gpio.o
 
-obj-$(CONFIG_ACER_A1_GPIO_KEYPAD) += keypad-acer-a1.o
 obj-$(CONFIG_ACER_VIBRATOR) += acer_vibrator.o
 obj-$(CONFIG_ACER_HEADSET) += acer_headset.o

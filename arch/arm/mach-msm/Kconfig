@@ -990,13 +990,6 @@ config SURF_FFA_GPIO_KEYPAD
 	help
 	  Select if the GPIO keypad is attached.
 
-config ACER_A1_GPIO_KEYPAD
-	bool "Acer A1 GPIO keypad"
-	depends on INPUT_GPIO = "y"
-	default n
-	help
-	  Select if the GPIO keypad is attached.
-
 config ACER_VIBRATOR
 	default n
 	tristate "LA3R5-475AC"
