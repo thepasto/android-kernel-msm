@@ -12,6 +12,7 @@
 #include <linux/delay.h>
 #include <linux/gpio.h>
 #include <linux/earlysuspend.h>
+#include <linux/input/auo_h353_ts.h>
 #include <mach/board.h>
 
 #define TS_DRIVER_NAME "auo-touch"
@@ -68,7 +69,7 @@ struct h353vl01_data{
 	struct input_dev *input;
 	ts_status status;
 	int version;
-	struct auo_platform_data* platform_data;
+	int gpio_ts_irq;
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend early_suspend;
 #endif
@@ -155,12 +156,12 @@ static int set_mode(ts_status status)
 		break;
 	case RESUME:
 		if(h353_data->version >= VERSION_4_3) {
-			gpio_output_enable(h353_data->platform_data->gpio, 1);
-			gpio_set_value(h353_data->platform_data->gpio,0);
-			gpio_set_value(h353_data->platform_data->gpio,1);
+			gpio_output_enable(h353_data->gpio_ts_irq, 1);
+			gpio_set_value(h353_data->gpio_ts_irq, 0);
+			gpio_set_value(h353_data->gpio_ts_irq, 1);
 			msleep(40);
-			gpio_set_value(h353_data->platform_data->gpio,0);
-			gpio_output_enable(h353_data->platform_data->gpio, 0);
+			gpio_set_value(h353_data->gpio_ts_irq, 0);
+			gpio_output_enable(h353_data->gpio_ts_irq, 0);
 			msleep(20);
 		}
 		/* Reset TouchScreen */
@@ -336,15 +337,31 @@ void h353vl01_early_resume(struct early_suspend *h)
 }
 #endif
 
-static int h353vl01_probe(
-	struct i2c_client *client, const struct i2c_device_id *id)
+static int h353vl01_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
+	int ret;
+	struct auo_h353_ts_platform_data *pdata = client->dev.platform_data;
+
 	h353_data = kzalloc(sizeof(struct h353vl01_data),GFP_KERNEL);
 	if (h353_data == NULL)
 		return -ENOMEM;
 
 	h353_data->client = client;
-	h353_data->platform_data = (struct auo_platform_data*)client->dev.platform_data;
+	if (!pdata) {
+		dev_err(&client->dev, "%s: platform data is required\n",
+								__func__);
+		return -EINVAL;
+	}
+
+	h353_data->gpio_ts_irq = pdata->gpio_ts_irq;
+
+	ret = gpio_request(h353_data->gpio_ts_irq, "TS_IRQ");
+	if (ret) {
+		dev_err(&client->dev, "%s: gpio_request for TS_IRQ failed\n",
+								__func__);
+		return ret;
+	}
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
 		return -ENOTSUPP;

@@ -117,6 +117,9 @@
 #ifdef CONFIG_LEDS_TCA6507
 #include <linux/leds-tca6507.h>
 #endif
+#ifdef CONFIG_TOUCHSCREEN_AUO_H353
+#include <linux/input/auo_h353_ts.h>
+#endif
 #include <mach/board_acer.h>
 
 #define SMEM_SPINLOCK_I2C	"D:I2C02000021"
@@ -336,8 +339,8 @@ static struct platform_device msm_fb_device = {
 };
 
 #if defined(CONFIG_TOUCHSCREEN_AUO_H353)
-static struct auo_platform_data auo_ts_data ={
-	.gpio = 108,
+static struct auo_h353_ts_platform_data auo_h353_ts_pdata ={
+	.gpio_ts_irq = SALSA_GPIO_AUO_TS_IRQ,
 };
 #endif
 
@@ -949,7 +952,7 @@ static struct i2c_board_info msm_i2c_board_info[] __initdata = {
 	{
 		I2C_BOARD_INFO("auo-touch", 0x5C),
 		.irq = MSM_GPIO_TO_INT(SALSA_GPIO_AUO_TS_IRQ),
-		.platform_data = &auo_ts_data,
+		.platform_data = &auo_h353_ts_pdata,
 	},
 #endif
 #if defined(CONFIG_AVR)

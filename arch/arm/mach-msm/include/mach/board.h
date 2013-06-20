@@ -281,10 +281,4 @@ void msm_snddev_tx_route_deconfig(void);
 
 extern unsigned int msm_shared_ram_phys; /* defined in arch/arm/mach-msm/io.c */
 
-#if defined(CONFIG_TOUCHSCREEN_AUO_H353)
-struct auo_platform_data {
-	int gpio;
-};
-#endif
-
 #endif
