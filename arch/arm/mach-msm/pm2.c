@@ -44,6 +44,9 @@
 #ifdef CONFIG_VFP
 #include <asm/vfp.h>
 #endif
+#ifdef CONFIG_MACH_ACER_A1
+#include <mach/board_acer.h>
+#endif
 
 #ifdef CONFIG_MSM_MEMORY_LOW_POWER_MODE_SUSPEND_DEEP_POWER_DOWN
 #include <mach/msm_migrate_pages.h>
@@ -1049,6 +1052,12 @@ static int msm_pm_power_collapse
 		goto power_collapse_early_exit;
 	}
 
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_set_os_pwr_state(from_idle ? ACER_OS_IDLE_MODE : ACER_OS_SUSPEND_MODE);
+	pr_debug("%s: power state = %s\n", __func__,
+			(from_idle ? "ACER_OS_IDLE_MODE" : "ACER_OS_SUSPEND_MODE"));
+#endif
+
 	saved_vector[0] = msm_pm_reset_vector[0];
 	saved_vector[1] = msm_pm_reset_vector[1];
 	msm_pm_reset_vector[0] = 0xE51FF004; /* ldr pc, 4 */
@@ -1093,6 +1102,12 @@ static int msm_pm_power_collapse
 	MSM_PM_DPRINTK(MSM_PM_DEBUG_CLOCK, KERN_INFO,
 		"%s(): restore clock rate to %lu\n", __func__,
 		saved_acpuclk_rate);
+
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_set_os_pwr_state(ACER_OS_NORMAL_MODE);
+	pr_debug("%s: power mode = ACER_OS_NORMAL_MODE\n", __func__);
+#endif
+
 	if (acpuclk_set_rate(smp_processor_id(), saved_acpuclk_rate,
 			SETRATE_PC) < 0)
 		printk(KERN_ERR "%s(): failed to restore clock rate(%lu)\n",
@@ -1719,8 +1734,29 @@ static void msm_pm_power_off(void)
 
 static void msm_pm_restart(char str, const char *cmd)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	unsigned id = 8;	//ACER_SMSM_PROC_CMD_SD_DOWNLOAD
+	unsigned id1 = 0;	//ACER_SDDL_ALL
+	unsigned id2 = 1;	//ACER_SDDL_AMSS_ONLY
+	unsigned id3 = 2;	//ACER_SDDL_OS_ONLY
+
+	msm_rpcrouter_close();
+	if (restart_reason == 0x77665503) {
+		pr_debug("%s: update_all\n", __func__);
+		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id1);
+	} else if (restart_reason == 0x77665504) {
+		pr_debug("%s: update_amss\n", __func__);
+		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id2);
+	} else if (restart_reason == 0x77665505) {
+		pr_debug("%s: update_os\n", __func__);
+		msm_proc_comm(PCOM_CUSTOMER_CMD1, &id, &id3);
+	} else {
+		msm_proc_comm(PCOM_RESET_CHIP_IMM, &restart_reason, 0);
+	}
+#else
 	msm_rpcrouter_close();
 	msm_proc_comm(PCOM_RESET_CHIP, &restart_reason, 0);
+#endif
 
 	for (;;)
 		;
@@ -1735,6 +1771,14 @@ static int msm_reboot_call
 			restart_reason = 0x77665500;
 		} else if (!strcmp(cmd, "recovery")) {
 			restart_reason = 0x77665502;
+#ifdef CONFIG_MACH_ACER_A1
+		} else if (!strcmp(cmd, "update_all")) {
+			restart_reason = 0x77665503;
+		} else if (!strcmp(cmd, "update_amss")) {
+			restart_reason = 0x77665504;
+		} else if (!strcmp(cmd, "update_os")) {
+			restart_reason = 0x77665505;
+#endif
 		} else if (!strcmp(cmd, "eraseflash")) {
 			restart_reason = 0x776655EF;
 		} else if (!strncmp(cmd, "oem-", 4)) {
@@ -1795,6 +1839,11 @@ static int __init msm_pm_init(void)
 	pmd[2] = __pmd(pmdval + (2 << (PGDIR_SHIFT - 1)));
 	flush_pmd_entry(pmd);
 	msm_pm_pc_pgd = virt_to_phys(pc_pgd);
+#endif
+
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_set_os_pwr_state(ACER_OS_NORMAL_MODE);
+	pr_debug("%s: power state: ACER_OS_NORMAL_MODE\n", __func__);
 #endif
 
 	pm_power_off = msm_pm_power_off;
