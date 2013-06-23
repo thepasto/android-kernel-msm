@@ -271,6 +271,15 @@ config MACH_SAPPHIRE
 	default n
 	bool "Sapphire"
 
+config MACH_ACER_A1
+	depends on ARCH_QSD8X50
+	depends on MSM_SOC_REV_NONE
+	depends on MSM_STACKED_MEMORY
+	default y
+	bool "ACER A1"
+	help
+	  Support for the Acer A1 board.
+
 config MACH_QSD8X50_SURF
 	depends on ARCH_QSD8X50
 	depends on MSM_SOC_REV_NONE
@@ -718,7 +727,7 @@ config HTC_PWRSINK
 
 config QSD_SVS
 	bool "QSD Static Voltage Scaling"
-	depends on (MACH_QSD8X50_SURF || MACH_QSD8X50_FFA || MACH_QSD8X50_COMET || MACH_QSD8X50A_SURF || MACH_QSD8X50A_FFA)
+	depends on (MACH_QSD8X50_SURF || MACH_QSD8X50_FFA || MACH_QSD8X50_COMET || MACH_QSD8X50A_SURF || MACH_QSD8X50A_FFA || MACH_ACER_A1)
 	default y
 	select TPS65023
 	help
@@ -726,7 +735,7 @@ config QSD_SVS
 
 config QSD_PMIC_DEFAULT_DCDC1
 	int "PMIC default output voltage"
-	depends on (MACH_QSD8X50_SURF || MACH_QSD8X50_FFA || MACH_QSD8X50_COMET || MACH_QSD8X50A_SURF || MACH_QSD8X50A_FFA)
+	depends on (MACH_QSD8X50_SURF || MACH_QSD8X50_FFA || MACH_QSD8X50_COMET || MACH_QSD8X50A_SURF || MACH_QSD8X50A_FFA || MACH_ACER_A1)
 	default 1250
 	help
 	  This is the PMIC voltage at Linux kernel boot.
@@ -1221,6 +1230,19 @@ config SURF_FFA_GPIO_KEYPAD
 	default y
 	help
 	  Select if the GPIO keypad is attached.
+
+config ACER_VIBRATOR
+	default y
+	tristate "Acer RPC vibrator driver"
+	help
+	  Enable support for Acer vibrator device via RPC calls.
+
+config ACER_HEADSET
+	tristate "Acer headset driver"
+	default y
+	help
+	  Enable support for Acer headset detection and headset
+	  button input.
 
 config MSM_SLEEP_TIME_OVERRIDE
 	bool "Allow overriding suspend/sleep time with PM module parameter"

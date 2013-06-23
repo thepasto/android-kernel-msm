@@ -57,6 +57,8 @@ obj-$(CONFIG_MSM_PIL) += peripheral-reset.o
 obj-$(CONFIG_ARCH_QSD8X50) += sirc.o
 obj-$(CONFIG_MSM_FIQ_SUPPORT) += fiq_glue.o
 obj-$(CONFIG_MACH_TROUT) += board-trout-rfkill.o
+obj-$(CONFIG_MACH_ACER_A1) += board-salsa.o board-salsa-tpa2018d1.o wifi-power.o
+obj-$(CONFIG_MACH_ACER_A1) += board-salsa-smem.o board-salsa-keypad.o
 obj-$(CONFIG_MSM_SDIO_AL) += sdio_al.o
 obj-$(CONFIG_MSM_SDIO_AL) += sdio_al_test.o
 obj-$(CONFIG_MSM_SDIO_AL) += sdio_al_dloader.o
@@ -183,6 +185,8 @@ obj-$(CONFIG_TROUT_BATTCHG) += htc_battery.o
 
 obj-$(CONFIG_HTC_PWRSINK) += htc_pwrsink.o
 obj-$(CONFIG_HTC_HEADSET) += htc_headset.o
+obj-$(CONFIG_ACER_VIBRATOR) += acer_vibrator.o
+obj-$(CONFIG_ACER_HEADSET) += acer_headset.o
 obj-$(CONFIG_MSM_RMT_STORAGE_CLIENT) += rmt_storage_client.o
 obj-$(CONFIG_MSM_SDIO_SMEM) += sdio_smem.o
 obj-$(CONFIG_PMIC8058) += pmic8058-gpio.o pmic8058-mpp.o

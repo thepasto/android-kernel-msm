@@ -265,8 +265,13 @@ __fixup_machine_type:
 	ldr	r4, =2712
 	cmp	r1, r3
 	moveq	r1, r4
+#ifdef CONFIG_MACH_ACER_A1
+	ldr	r3, =1009000			@ acer_a1
+	ldr	r4, =2652
+#else
 	ldr	r3, =1009000			@ msm8x60_rumi3
 	ldr	r4, =3016
+#endif
 	cmp	r1, r3
 	moveq	r1, r4
 	ldr	r3, =1009001			@ msm8x60_sim
