@@ -2441,6 +2441,13 @@ choice
 	prompt "LCD Panel"
 	default FB_MSM_MDDI_AUTO_DETECT
 
+config FB_MSM_LCDC_AUO_H353_WVGA
+	depends on FB_MSM_LCDC_HW
+	bool "LCDC AU Optronics H353VL10 WVGA Panel"
+	select FB_MSM_LCDC_PANEL
+	---help---
+	  Support for LCDC AU Optronics H353VL10 WVGA (800x480) panel
+
 config FB_MSM_LCDC_PRISM_WVGA_PANEL
 	depends on FB_MSM_LCDC_HW
 	bool "LCDC Prism WVGA Panel"
