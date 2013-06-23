@@ -4894,6 +4894,7 @@ wl_iw_set_wpaauth(
 			val |= iw->pwsec;
 		}
 
+#ifndef CONFIG_MACH_ACER_A1
 		if (iw->privacy_invoked && !val) {
 			WL_WSEC(("%s: %s: 'Privacy invoked' TRUE but clearing wsec, assuming "
 				"we're a WPS enrollee\n", dev->name, __FUNCTION__));
@@ -4907,6 +4908,7 @@ wl_iw_set_wpaauth(
 				return error;
 			}
 		}
+#endif
 
 		if ((error = dev_wlc_intvar_set(dev, "wsec", val)))
 			return error;
@@ -4990,6 +4992,7 @@ wl_iw_set_wpaauth(
 		
 		break;
 	case IW_AUTH_PRIVACY_INVOKED: {
+#ifndef CONFIG_MACH_ACER_A1
 		int wsec;
 
 		if (paramval == 0) {
@@ -5016,6 +5019,7 @@ wl_iw_set_wpaauth(
 				}
 			}
 		}
+#endif
 		break;
 	}
 #endif
@@ -5144,7 +5148,9 @@ wl_iw_get_wpaauth(
 		
 		break;
 	case IW_AUTH_PRIVACY_INVOKED:
+#ifndef CONFIG_MACH_ACER_A1
 		paramval = iw->privacy_invoked;
+#endif
 		break;
 #endif 
 	}
