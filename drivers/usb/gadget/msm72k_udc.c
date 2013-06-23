@@ -45,6 +45,9 @@
 #include <mach/clk.h>
 #include <linux/uaccess.h>
 #include <linux/wakelock.h>
+#ifdef CONFIG_MACH_ACER_A1
+#include <mach/board_acer.h>
+#endif
 
 static const char driver_name[] = "msm72k_udc";
 
@@ -281,13 +284,44 @@ static ssize_t print_switch_state(struct switch_dev *sdev, char *buf)
 
 static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	acer_charger_type_t charger_type = ACER_CHARGER_TYPE_USB;
+	enum chg_type res;
+
+	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS) {
+		charger_type = ACER_CHARGER_TYPE_AC;
+	} else {
+		/* HW 0.5 ID pin always low, only USB charging */
+		if (acer_hw_version != ACER_HW_VERSION_0_5) {
+			if ((readl(USB_OTGSC) & OTGSC_ID) != OTGSC_ID)
+				/* ID Pin Low */
+				charger_type = ACER_CHARGER_TYPE_AC;
+		}
+	}
+
+	acer_smem_set_charger_type(charger_type);
+
+	if (charger_type == ACER_CHARGER_TYPE_AC)
+		res = USB_CHG_TYPE__WALLCHARGER;
+	else if (charger_type == ACER_CHARGER_TYPE_USB)
+		res = USB_CHG_TYPE__SDP;
+	else
+		res = USB_CHG_TYPE__INVALID;
+
+	return res;
+#else
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS)
 		return USB_CHG_TYPE__WALLCHARGER;
 	else
 		return USB_CHG_TYPE__SDP;
+#endif
 }
 
+#ifdef CONFIG_MACH_ACER_A1
+#define USB_WALLCHARGER_CHG_CURRENT 900
+#else
 #define USB_WALLCHARGER_CHG_CURRENT 1800
+#endif
 static int usb_get_max_power(struct usb_info *ui)
 {
 	struct msm_otg *otg = to_msm_otg(ui->xceiv);
@@ -1542,6 +1576,9 @@ static void usb_do_work(struct work_struct *w)
 				msm72k_pullup_internal(&ui->gadget, 0);
 				spin_unlock_irqrestore(&ui->lock, iflags);
 
+#ifdef CONFIG_MACH_ACER_A1
+				acer_smem_set_charger_type(ACER_CHARGER_TYPE_NONE);
+#endif
 
 				/* if charger is initialized to known type
 				 * we must let modem know about charger
@@ -2479,6 +2516,9 @@ static int msm72k_probe(struct platform_device *pdev)
 
 	pm_runtime_enable(&pdev->dev);
 
+#ifdef CONFIG_MACH_ACER_A1
+	acer_smem_set_charger_type(ACER_CHARGER_TYPE_NONE);
+#endif
 	/* Setup phy stuck timer */
 	if (ui->pdata && ui->pdata->is_phy_status_timer_on)
 		setup_timer(&phy_status_timer, usb_phy_status_check_timer, 0);
