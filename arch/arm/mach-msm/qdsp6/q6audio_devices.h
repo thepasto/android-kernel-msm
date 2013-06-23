@@ -77,6 +77,12 @@ struct q6_device_info {
 
 #define CAD_HW_DEVICE_ID_VOICE			0x15
 
+#ifdef CONFIG_MACH_ACER_A1
+/* Path IDs used for HAC */
+#define CAD_HW_DEVICE_ID_HAC_HANDSET_MIC        0x17
+#define CAD_HW_DEVICE_ID_HAC_HANDSET_SPKR       0x18
+#endif
+
 #define CAD_HW_DEVICE_ID_I2S_RX                 0x20
 #define CAD_HW_DEVICE_ID_I2S_TX                 0x21
 
@@ -285,6 +291,26 @@ static struct q6_device_info q6_audio_devices[] = {
 		.codec	= Q6_ECODEC_TX,
 		.hw	= Q6_HW_BT_SCO,
 	},
+#ifdef CONFIG_MACH_ACER_A1
+	{
+		.id	= ADSP_AUDIO_DEVICE_ID_HAC_HANDSET_SPKR,
+		.cad_id	= CAD_HW_DEVICE_ID_HAC_HANDSET_SPKR,
+		.path	= ADIE_PATH_HAC_HANDSET_RX,
+		.rate   = 48000,
+		.dir	= Q6_RX,
+		.codec	= Q6_ICODEC_RX,
+		.hw	= Q6_HW_HANDSET,
+	},
+	{
+		.id	= ADSP_AUDIO_DEVICE_ID_HAC_HANDSET_MIC,
+		.cad_id	= CAD_HW_DEVICE_ID_HAC_HANDSET_MIC,
+		.path	= ADIE_PATH_HAC_HANDSET_TX,
+		.rate   = 8000,
+		.dir	= Q6_TX,
+		.codec	= Q6_ICODEC_TX,
+		.hw	= Q6_HW_HANDSET,
+	},
+#endif
 	{
 		.id	= ADSP_AUDIO_DEVICE_ID_I2S_SPKR,
 		.cad_id	= CAD_HW_DEVICE_ID_I2S_RX,

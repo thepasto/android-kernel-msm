@@ -61,6 +61,12 @@ enum {
 #define ADIE_PATH_TTY_HEADSET_TX		0x010740fe
 #define ADIE_PATH_TTY_HEADSET_RX		0x010740ff
 
+/* Path IDs used for HAC */
+#ifdef CONFIG_MACH_ACER_A1
+#define ADIE_PATH_HAC_HANDSET_TX		0x010740f6
+#define ADIE_PATH_HAC_HANDSET_RX		0x010740f7
+#endif
+
 /* Path IDs used by Factory Test Mode. */
 #define ADIE_PATH_FTM_MIC1_TX			0x01074108
 #define ADIE_PATH_FTM_MIC2_TX			0x01074107

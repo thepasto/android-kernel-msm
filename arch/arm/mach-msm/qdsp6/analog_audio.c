@@ -23,8 +23,15 @@
 #include <asm/string.h>
 #include <asm/mach-types.h>
 #include <mach/debug_mm.h>
+#ifdef CONFIG_MACH_ACER_A1
+#include "../board-salsa.h"
+#endif
 
-#define GPIO_HEADSET_AMP 157
+#ifdef CONFIG_MACH_ACER_A1
+# define GPIO_HEADSET_AMP SALSA_GPIO_HS_AMP_EN
+#else
+# define GPIO_HEADSET_AMP 157
+#endif
 #define GPIO_SPEAKER_AMP 39
 #define GPIO_HEADSET_SHDN_N 48
 
@@ -33,7 +40,11 @@ void analog_init(void)
 	/* stereo pmic init */
 	pmic_spkr_set_gain(LEFT_SPKR, SPKR_GAIN_PLUS12DB);
 	pmic_spkr_set_gain(RIGHT_SPKR, SPKR_GAIN_PLUS12DB);
+#ifdef CONFIG_MACH_ACER_A1
+	pmic_mic_set_volt(MIC_VOLT_2_00V);
+#else
 	pmic_mic_set_volt(MIC_VOLT_1_80V);
+#endif
 
 	if (machine_is_qsd8x50a_st1_5()) {
 		gpio_set_value(GPIO_SPEAKER_AMP, 0);
@@ -54,6 +65,14 @@ void analog_headset_enable(int en)
 		gpio_set_value(GPIO_HEADSET_AMP, !!en);
 }
 
+#ifdef CONFIG_MACH_ACER_A1
+extern void tpa2018d1_set_speaker_amp(int on);
+
+void analog_speaker_enable(int en)
+{
+	tpa2018d1_set_speaker_amp(!!en);
+}
+#else
 void analog_speaker_enable(int en)
 {
 	struct spkr_config_mode scm;
@@ -100,6 +119,7 @@ void analog_speaker_enable(int en)
 		pmic_set_spkr_configuration(&scm);
 	}
 }
+#endif
 
 void analog_mic_enable(int en)
 {
