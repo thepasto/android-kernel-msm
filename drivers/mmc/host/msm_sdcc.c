@@ -50,6 +50,9 @@
 #include <mach/dma.h>
 #include <mach/htc_pwrsink.h>
 #include <mach/sdio_al.h>
+#ifdef CONFIG_MACH_ACER_A1
+#include <mach/gpio.h>
+#endif
 
 
 #include "msm_sdcc.h"
@@ -69,6 +72,9 @@ static int  msmsdcc_dbg_init(void);
 #endif
 
 static unsigned int msmsdcc_pwrsave = 1;
+#if defined (CONFIG_MACH_ACER_A1)
+#define SDCC1_DATA_0	54
+#endif
 
 static struct mmc_command dummy52cmd;
 static struct mmc_request dummy52mrq = {
@@ -323,7 +329,18 @@ msmsdcc_dma_complete_tlet(unsigned long data)
 			mmc_request_done(host->mmc, mrq);
 			return;
 		} else
+#if defined (CONFIG_MACH_ACER_A1)
+		{
+			while ((host->pdev_id == 1) &&
+				(mrq->data->flags & MMC_DATA_WRITE) &&
+				(gpio_get_value(SDCC1_DATA_0) == 0)) {
+				udelay(5);
+			}
 			msmsdcc_start_command(host, mrq->data->stop, 0);
+		}
+#else
+			msmsdcc_start_command(host, mrq->data->stop, 0);
+#endif
 	}
 
 out:
@@ -349,6 +366,10 @@ msmsdcc_dma_complete_func(struct msm_dmov_cmd *cmd,
 
 static int validate_dma(struct msmsdcc_host *host, struct mmc_data *data)
 {
+#if defined (CONFIG_MACH_ACER_A1)
+	if ((host->pdev_id == 2) && (data->flags & MMC_DATA_READ))
+		return -ENOENT;
+#endif
 	if ((host->dma.channel == -1) || (host->dma.crci == -1))
 		return -ENOENT;
 
@@ -539,6 +560,9 @@ msmsdcc_start_data(struct msmsdcc_host *host, struct mmc_data *data,
 	do_div(clks, 1000000000UL);
 	timeout = data->timeout_clks + (unsigned int)clks*2 ;
 
+#if defined (CONFIG_MACH_ACER_A1)
+	timeout *= 10;
+#endif
 	if (datactrl & MCI_DPSM_DMAENABLE) {
 		/* Save parameters for the exec function */
 		host->cmd_timeout = timeout;
@@ -1032,6 +1056,13 @@ msmsdcc_irq(int irq, void *dev_id)
 								host,
 								data->stop, 0);
 							timer = 1;
+#ifdef CONFIG_MACH_ACER_A1
+							while ((host->pdev_id == 1) &&
+								(data->flags & MMC_DATA_WRITE) &&
+								(gpio_get_value(SDCC1_DATA_0) == 0)) {
+								udelay(5);
+							}
+#endif
 						}
 					} else {
 						host->dummy_52_sent = 1;
