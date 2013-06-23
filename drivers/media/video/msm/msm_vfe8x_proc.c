@@ -1893,6 +1893,10 @@ int vfe_cmd_init(struct msm_vfe_callback *presp,
 		rc = -EIO;
 		goto cmd_init_failed3;
 	}
+#ifdef CONFIG_MACH_ACER_A1
+	spin_lock_init(&ctrl->irqs_lock);
+	spin_lock_init(&msm_vfe_ctrl_lock);
+#endif
 
 	ctrl->syncdata = sdata;
 	return 0;
@@ -1922,7 +1926,9 @@ void vfe_cmd_release(struct platform_device *dev)
 
 	spin_lock_irqsave(&msm_vfe_ctrl_lock, flags);
 	kfree(ctrl);
+#ifndef CONFIG_MACH_ACER_A1
 	ctrl = 0;
+#endif
 	spin_unlock_irqrestore(&msm_vfe_ctrl_lock, flags);
 }
 
@@ -3873,7 +3879,9 @@ static void vfe_reset_internal_variables(void)
 
 void vfe_reset(void)
 {
+#ifndef CONFIG_MACH_ACER_A1
 	spin_lock_init(&msm_vfe_ctrl_lock);
+#endif
 	vfe_reset_internal_variables();
 
 	atomic_set(&ctrl->vfe_serv_interrupt, 1);

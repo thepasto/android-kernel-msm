@@ -425,7 +425,9 @@ struct fd_roi_info {
 };
 
 struct msm_frame {
+#ifndef CONFIG_ACER_CAMERA_FROYO_USERSPACE
 	struct timespec ts;
+#endif
 	int path;
 	int type;
 	unsigned long buffer;
@@ -555,12 +557,18 @@ struct msm_snapshot_pp_status {
 #define CFG_GET_PICT_P_PL		25
 #define CFG_GET_AF_MAX_STEPS		26
 #define CFG_GET_PICT_MAX_EXP_LC		27
+
+#ifdef CONFIG_MACH_ACER_A1
+#define CFG_GET_WB_GAINS		28
+#define CFG_SEND_WB_INFO		29
+#define CFG_MAX				30
+#else
 #define CFG_SEND_WB_INFO    28
 #define CFG_SENSOR_INIT    29
 #define CFG_GET_3D_CALI_DATA 30
 #define CFG_GET_CALIB_DATA		31
 #define CFG_MAX			32
-
+#endif
 
 #define MOVE_NEAR	0
 #define MOVE_FAR	1

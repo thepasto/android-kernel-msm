@@ -63,6 +63,12 @@
 
 #define MT9P012_REV_7
 
+#if defined(CONFIG_MACH_ACER_A1)
+#include <mach/board_acer.h>
+#include <mach/vreg.h>
+#define USE_EEPROM
+#endif
+
 enum mt9p012_test_mode {
 	TEST_OFF,
 	TEST_1,
@@ -95,12 +101,21 @@ enum mt9p012_setting {
 /* actuator's Slave Address */
 #define MT9P012_AF_I2C_ADDR   0x18
 
+#ifdef USE_EEPROM
+/*EEPROM's Slave Address*/
+#define MT9P012_EEPROM_ADDR   0xA0
+#endif
 /* AF Total steps parameters */
 #define MT9P012_STEPS_NEAR_TO_CLOSEST_INF  32
 #define MT9P012_TOTAL_STEPS_NEAR_TO_FAR    32
 
+#if defined(CONFIG_MACH_ACER_A1)
+#define MT9P012_PREVIEW_DUMMY_PIXELS 0
+#define MT9P012_PREVIEW_DUMMY_LINES  0
+#else
 #define MT9P012_MU5M0_PREVIEW_DUMMY_PIXELS 0
 #define MT9P012_MU5M0_PREVIEW_DUMMY_LINES  0
+#endif
 
 /* Time in milisecs for waiting for the sensor to reset.*/
 #define MT9P012_RESET_DELAY_MSECS   66
@@ -137,7 +152,126 @@ static struct mt9p012_ctrl *mt9p012_ctrl;
 static DECLARE_WAIT_QUEUE_HEAD(mt9p012_wait_queue);
 DEFINE_MUTEX(mt9p012_mut);
 
+#if defined(CONFIG_MACH_ACER_A1)
+static uint8_t  mode_mask = 0x02;
+static uint16_t step_position_table[MT9P012_TOTAL_STEPS_NEAR_TO_FAR+1];
+static uint16_t non_linear_boundary1     = 2;
+static uint16_t nl_region_code_per_step1 = 50; /* 10 bit */
+static uint16_t non_linear_boundary2     = 5;
+static uint16_t nl_region_code_per_step2 = 24; /* 10 bit */
+static uint16_t l_region_code_per_step   = 16;
+static uint8_t damping_us_per_step = 45; /* 111 DAC */
+static uint8_t damping_threshold   = 5;
+static uint8_t damping_mode        = 0x2;
+#endif
 
+#ifdef USE_EEPROM
+static struct mt9p012_i2c_reg_conf eeprom_tbl[] = {
+	{0x360A, 0},
+	{0x360C, 0},
+	{0x360E, 0},
+	{0x3610, 0},
+	{0x3612, 0},
+	{0x364A, 0},
+	{0x364C, 0},
+	{0x364E, 0},
+	{0x3650, 0},
+	{0x3652, 0},
+	{0x368A, 0},
+	{0x368C, 0},
+	{0x368E, 0},
+	{0x3690, 0},
+	{0x3692, 0},
+	{0x36CA, 0},
+	{0x36CC, 0},
+	{0x36CE, 0},
+	{0x36D0, 0},
+	{0x36D2, 0},
+	{0x370A, 0},
+	{0x370C, 0},
+	{0x370E, 0},
+	{0x3710, 0},
+	{0x3712, 0},
+	{0x3600, 0},
+	{0x3602, 0},
+	{0x3604, 0},
+	{0x3606, 0},
+	{0x3608, 0},
+	{0x3640, 0},
+	{0x3642, 0},
+	{0x3644, 0},
+	{0x3646, 0},
+	{0x3648, 0},
+	{0x3680, 0},
+	{0x3682, 0},
+	{0x3684, 0},
+	{0x3686, 0},
+	{0x3688, 0},
+	{0x36C0, 0},
+	{0x36C2, 0},
+	{0x36C4, 0},
+	{0x36C6, 0},
+	{0x36C8, 0},
+	{0x3700, 0},
+	{0x3702, 0},
+	{0x3704, 0},
+	{0x3706, 0},
+	{0x3708, 0},
+	{0x3614, 0},
+	{0x3616, 0},
+	{0x3618, 0},
+	{0x361A, 0},
+	{0x361C, 0},
+	{0x3654, 0},
+	{0x3656, 0},
+	{0x3658, 0},
+	{0x365A, 0},
+	{0x365C, 0},
+	{0x3694, 0},
+	{0x3696, 0},
+	{0x3698, 0},
+	{0x369A, 0},
+	{0x369C, 0},
+	{0x36D4, 0},
+	{0x36D6, 0},
+	{0x36D8, 0},
+	{0x36DA, 0},
+	{0x36DC, 0},
+	{0x3714, 0},
+	{0x3716, 0},
+	{0x3718, 0},
+	{0x371A, 0},
+	{0x371C, 0},
+	{0x361E, 0},
+	{0x3620, 0},
+	{0x3622, 0},
+	{0x3624, 0},
+	{0x3626, 0},
+	{0x365E, 0},
+	{0x3660, 0},
+	{0x3662, 0},
+	{0x3664, 0},
+	{0x3666, 0},
+	{0x369E, 0},
+	{0x36A0, 0},
+	{0x36A2, 0},
+	{0x36A4, 0},
+	{0x36A6, 0},
+	{0x36DE, 0},
+	{0x36E0, 0},
+	{0x36E2, 0},
+	{0x36E4, 0},
+	{0x36E6, 0},
+	{0x371E, 0},
+	{0x3720, 0},
+	{0x3722, 0},
+	{0x3724, 0},
+	{0x3726, 0},
+	{0x3782, 0},
+	{0x3784, 0},
+	{0x3780, 0},
+};
+#endif
 /*=============================================================*/
 
 static int mt9p012_i2c_rxdata(unsigned short saddr, unsigned char *rxdata,
@@ -185,6 +319,28 @@ static int32_t mt9p012_i2c_read_w(unsigned short saddr, unsigned short raddr,
 	if (!rdata)
 		return -EIO;
 
+#if defined(CONFIG_MACH_ACER_A1)
+	{
+		int i;
+		for (i=0; i<=3; i++) {
+			memset(buf, 0, sizeof(buf));
+			buf[0] = (raddr & 0xFF00) >> 8;
+			buf[1] = (raddr & 0x00FF);
+
+			rc = mt9p012_i2c_rxdata(saddr, buf, 2);
+			if (rc >= 0)
+				break;
+			else {
+				pr_err("mt9p012_i2c_read_w failed, retry %d time\n", i);
+				pr_err("saddr = %04x, raddr = %04x\n", saddr, raddr);
+			}
+		}
+	}
+
+	*rdata = buf[0] << 8 | buf[1];
+
+	return rc;
+#else
 	memset(buf, 0, sizeof(buf));
 
 	buf[0] = (raddr & 0xFF00) >> 8;
@@ -200,7 +356,83 @@ static int32_t mt9p012_i2c_read_w(unsigned short saddr, unsigned short raddr,
 		CDBG("mt9p012_i2c_read failed!\n");
 
 	return rc;
+#endif
 }
+
+#ifdef USE_EEPROM
+static int eeprom_i2c_rxdata(unsigned short saddr, unsigned char *rxdata,
+			      int length)
+{
+	struct i2c_msg msgs[] = {
+		{
+		 .addr = saddr,
+		 .flags = 0,
+		 .len = 1,
+		 .buf = rxdata,
+		 },
+		{
+		 .addr = saddr,
+		 .flags = I2C_M_RD,
+		 .len = length,
+		 .buf = rxdata,
+		 },
+	};
+
+	if (i2c_transfer(mt9p012_client->adapter, msgs, 2) < 0) {
+		pr_err("eeprom_i2c_rxdata failed!\n");
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int32_t eeprom_i2c_read_w(unsigned short saddr, unsigned short raddr,
+				  unsigned short *rdata)
+{
+	int32_t rc = 0;
+	unsigned char buf[4];
+
+	if (!rdata)
+		return -EIO;
+
+	{
+		int i;
+		for (i=0; i<=3; i++) {
+			memset(buf, 0, sizeof(buf));
+			buf[0] = raddr;
+
+			rc = eeprom_i2c_rxdata(saddr, buf, 2);
+			if (rc >= 0)
+				break;
+			else {
+				pr_err("eeprom_i2c_read_w failed, retry %d time\n", i);
+				pr_err("saddr = %04x, raddr = %04x\n", saddr, raddr);
+			}
+		}
+	}
+
+	*rdata = buf[0] << 8 | buf[1];
+
+	return rc;
+
+	/*
+	memset(buf, 0, sizeof(buf));
+
+	buf[0] = raddr;
+
+	rc = eeprom_i2c_rxdata(saddr, buf, 2);
+	if (rc < 0)
+		return rc;
+
+	*rdata = buf[0] << 8 | buf[1];
+
+	if (rc < 0)
+		pr_err("mt9p012_i2c_read failed!\n");
+
+	return rc;
+	*/
+}
+#endif
 
 static int32_t mt9p012_i2c_txdata(unsigned short saddr, unsigned char *txdata,
 				  int length)
@@ -238,6 +470,26 @@ static int32_t mt9p012_i2c_write_b(unsigned short saddr, unsigned short baddr,
 	int32_t rc = -EIO;
 	unsigned char buf[2];
 
+#if defined(CONFIG_MACH_ACER_A1)
+	{
+		int i;
+		for (i=0; i<=3; i++) {
+			memset(buf, 0, sizeof(buf));
+			buf[0] = baddr;
+			buf[1] = bdata;
+
+			rc = mt9p012_i2c_txdata(saddr, buf, 2);
+			if (rc >= 0)
+				break;
+			else {
+				pr_err("mt9p012_i2c_write_b failed, retry %d time\n", i);
+				pr_err("saddr = %04x, baddr = %04x, bdata = %04x\n", saddr, baddr, bdata);
+			}
+		}
+	}
+
+	return rc;
+#else
 	memset(buf, 0, sizeof(buf));
 	buf[0] = baddr;
 	buf[1] = bdata;
@@ -248,6 +500,7 @@ static int32_t mt9p012_i2c_write_b(unsigned short saddr, unsigned short baddr,
 		     saddr, baddr, bdata);
 
 	return rc;
+#endif
 }
 
 static int32_t mt9p012_i2c_write_w(unsigned short saddr, unsigned short waddr,
@@ -256,6 +509,28 @@ static int32_t mt9p012_i2c_write_w(unsigned short saddr, unsigned short waddr,
 	int32_t rc = -EIO;
 	unsigned char buf[4];
 
+#if defined(CONFIG_MACH_ACER_A1)
+	{
+		int i;
+		for (i=0; i<=3; i++) {
+			memset(buf, 0, sizeof(buf));
+			buf[0] = (waddr & 0xFF00) >> 8;
+			buf[1] = (waddr & 0x00FF);
+			buf[2] = (wdata & 0xFF00) >> 8;
+			buf[3] = (wdata & 0x00FF);
+
+                        rc = mt9p012_i2c_txdata(saddr, buf, 4);
+                        if (rc >= 0)
+                                break;
+			else {
+	                        pr_err("mt9p012_i2c_write_w failed, retry %d time\n", i);
+				pr_err("saddr = %04x, waddr = %04x, wdata = %04x\n", saddr, waddr, wdata);
+			}
+                }
+        }
+
+        return rc;
+#else
 	memset(buf, 0, sizeof(buf));
 	buf[0] = (waddr & 0xFF00) >> 8;
 	buf[1] = (waddr & 0x00FF);
@@ -269,6 +544,7 @@ static int32_t mt9p012_i2c_write_w(unsigned short saddr, unsigned short waddr,
 		     waddr, wdata);
 
 	return rc;
+#endif
 }
 
 static int32_t mt9p012_i2c_write_w_table(struct mt9p012_i2c_reg_conf const
@@ -351,8 +627,13 @@ static int32_t mt9p012_set_lc(void)
 {
 	int32_t rc;
 
+#ifdef USE_EEPROM
+	rc = mt9p012_i2c_write_w_table(eeprom_tbl,
+					ARRAY_SIZE(eeprom_tbl));
+#else
 	rc = mt9p012_i2c_write_w_table(mt9p012_regs.rftbl,
 				       mt9p012_regs.rftbl_size);
+#endif
 
 	return rc;
 }
@@ -859,6 +1140,102 @@ static int32_t mt9p012_power_down(void)
 	return rc;
 }
 
+#if defined(CONFIG_MACH_ACER_A1)
+static void mt9p012_setup_step_position_table(void)
+{
+	int i;
+
+	step_position_table[0] = 0;
+
+	for(i=1; i <= MT9P012_TOTAL_STEPS_NEAR_TO_FAR; i++) {
+
+		if ( i <= non_linear_boundary1) {
+			step_position_table[i] = step_position_table[i-1] +
+									nl_region_code_per_step1;
+		} else if ( i <= non_linear_boundary2) {
+			step_position_table[i] = step_position_table[i-1] +
+									nl_region_code_per_step2;
+		} else {
+			step_position_table[i] = step_position_table[i-1] +
+									l_region_code_per_step;
+		}
+	}
+}
+
+
+static int32_t mt9p012_move_focus(int direction, int32_t num_steps)
+{
+	int16_t step_direction;
+	int16_t next_position;
+	int16_t next_step_position;
+	uint8_t code_val_msb, code_val_lsb;
+	int16_t time_wait_per_step;
+
+	if (num_steps > MT9P012_TOTAL_STEPS_NEAR_TO_FAR)
+		num_steps = MT9P012_TOTAL_STEPS_NEAR_TO_FAR;
+	else if (num_steps == 0) {
+		return 0;
+	}
+
+	if (direction == MOVE_NEAR)
+		step_direction = 1;
+	else if (direction == MOVE_FAR)
+		step_direction = -1;
+	else {
+		pr_err("mt9p012_move_focus failed at line %d ...\n", __LINE__);
+		return -EINVAL;
+	}
+
+	next_step_position = mt9p012_ctrl->curr_lens_pos + (step_direction * num_steps);
+
+	if (next_step_position < 0)
+		next_step_position = 0;
+	else if (next_step_position > MT9P012_TOTAL_STEPS_NEAR_TO_FAR)
+		next_step_position = MT9P012_TOTAL_STEPS_NEAR_TO_FAR;
+
+	next_position = step_position_table[next_step_position];
+	CDBG("next_position = %d, next_step = %d", next_position, next_step_position);
+
+	time_wait_per_step = 5000 / (step_direction * (next_position - step_position_table[mt9p012_ctrl->curr_lens_pos]));
+
+	if (time_wait_per_step >= 400) {
+		/* 400~ */
+		mode_mask = 0x4;
+	} else if (time_wait_per_step >= 200) {
+		/* 200~400 */
+		mode_mask = 0x3;
+	} else if (time_wait_per_step >= 100) {
+		/* 100~200 */
+		mode_mask = 0x2;
+	} else if (time_wait_per_step >= 50) {
+		/* 50~100 */
+		mode_mask = 0x1;
+	} else if (step_direction == -1 &&
+			next_step_position <= damping_threshold &&
+			time_wait_per_step <= damping_us_per_step) {
+		/* extra damping needed */
+		mode_mask = damping_mode;
+	} else {
+		mode_mask = 0xB;
+	}
+
+	code_val_msb = next_position >> 4;
+	code_val_lsb = (next_position & 0x000F) << 4;
+	code_val_lsb |= mode_mask;
+
+	/* Writing the digital code for current to the actuator */
+	if (mt9p012_i2c_write_b(MT9P012_AF_I2C_ADDR >> 1,
+				code_val_msb, code_val_lsb) < 0) {
+		pr_err("mt9p012_move_focus failed at line %d ...\n", __LINE__);
+		return -EBUSY;
+	}
+
+	/* Storing the current lens Position */
+	mt9p012_ctrl->curr_lens_pos = next_step_position;
+
+	return 0;
+}
+#else
 static int32_t mt9p012_move_focus(int direction, int32_t num_steps)
 {
 	int16_t step_direction;
@@ -909,6 +1286,7 @@ static int32_t mt9p012_move_focus(int direction, int32_t num_steps)
 
 	return 0;
 }
+#endif
 
 static int32_t mt9p012_set_default_focus(void)
 {
@@ -971,6 +1349,9 @@ static int mt9p012_probe_init_sensor(const struct msm_camera_sensor_info *data)
 		rc = -ENODEV;
 		goto init_probe_fail;
 	}
+#if defined(CONFIG_MACH_ACER_A1)
+	pr_info("[CAM]mt9p012 sensor detected,model_id = = 0x%x\n", chipid);
+#endif
 
 	rc = mt9p012_i2c_write_w(mt9p012_client->addr, 0x306E, 0x9000);
 	if (rc < 0) {
@@ -1001,8 +1382,38 @@ init_probe_done:
 	return rc;
 }
 
+#ifdef USE_EEPROM
+static void mt9p012_read_eeprom(uint16_t *rg_ratio, uint16_t *bg_ratio)
+{
+	uint16_t awb_data;
+	uint16_t gb_gr_ratio;
+	int rc;
+
+	rc = mt9p012_i2c_read_w(MT9P012_EEPROM_ADDR >> 1, 0XCE00, &awb_data);
+	if (rc < 0) {
+		*rg_ratio = 1;
+	} else {
+		CDBG("rg = %x\n", awb_data);
+		*rg_ratio = awb_data & 0x00FF;
+	}
+	rc = mt9p012_i2c_read_w(MT9P012_EEPROM_ADDR >> 1, 0XD000, &awb_data);
+	if (rc < 0) {
+		*bg_ratio = 1;
+		gb_gr_ratio = 1;
+	} else {
+		CDBG("gb and bg = %x\n", awb_data);
+		gb_gr_ratio = ((awb_data & 0xFF00) >> 8);
+		*bg_ratio = awb_data & 0x00FF;
+	}
+	pr_info("EEPROM Data r_gr %x, gb_gr %x, b_gr %x\n",
+		*rg_ratio, gb_gr_ratio, *bg_ratio);
+}
+#endif
 static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	struct vreg *gp2, *gp3;
+#endif
 	int32_t rc;
 
 	mt9p012_ctrl = kzalloc(sizeof(struct mt9p012_ctrl), GFP_KERNEL);
@@ -1020,6 +1431,25 @@ static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 
 	if (data)
 		mt9p012_ctrl->sensordata = data;
+
+#ifdef CONFIG_MACH_ACER_A1
+	/* power-up sequence */
+	gp2 = vreg_get(0, "gp2");
+	gp3 = vreg_get(0, "gp3");
+	vreg_enable(gp2);
+	vreg_enable(gp3);
+	msleep(1);
+	vreg_disable(gp2);
+	msleep(1);
+	vreg_enable(gp2);
+
+	if (acer_hw_version >= 3)
+		gpio_direction_output(data->sensor_pwd, 1);
+
+	/* enable mclk first */
+	msm_camio_clk_rate_set(MT9P012_DEFAULT_CLOCK_RATE);
+	mdelay(20);
+#endif
 
 	msm_camio_camif_pad_reg_reset();
 	mdelay(20);
@@ -1063,6 +1493,9 @@ static int mt9p012_sensor_open_init(const struct msm_camera_sensor_info *data)
 			goto init_fail1;
 		}
 		msleep(20);
+#ifdef CONFIG_MACH_ACER_A1
+		mt9p012_setup_step_position_table();
+#endif
 		rc = mt9p012_set_default_focus();
 		if (rc < 0) {
 			gpio_direction_output(mt9p012_ctrl->sensordata->vcm_pwd,
@@ -1220,7 +1653,19 @@ int mt9p012_sensor_config(void __user *argp)
 				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
-
+#ifdef USE_EEPROM
+	case CFG_GET_WB_GAINS:
+		CDBG("%s: CFG_GET_WB_GAINS\n", __func__);
+		cdata.cfg.wb_info.green_gain = 0x1;
+		cdata.cfg.wb_info.red_gain = 0x1;
+		cdata.cfg.wb_info.blue_gain = 0x1;
+		mt9p012_read_eeprom(&cdata.cfg.wb_info.red_gain,
+				    &cdata.cfg.wb_info.blue_gain);
+		if (copy_to_user((void *)argp, &cdata,
+				 sizeof(struct sensor_cfg_data)))
+			rc = -EFAULT;
+		break;
+#endif
 	case CFG_SET_EFFECT:
 	default:
 		rc = -EINVAL;
@@ -1233,6 +1678,9 @@ int mt9p012_sensor_config(void __user *argp)
 
 int mt9p012_sensor_release(void)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	struct vreg *gp2, *gp3;
+#endif
 	int rc = -EBADF;
 
 	mutex_lock(&mt9p012_mut);
@@ -1246,6 +1694,17 @@ int mt9p012_sensor_release(void)
 		gpio_direction_output(mt9p012_ctrl->sensordata->vcm_pwd, 0);
 		gpio_free(mt9p012_ctrl->sensordata->vcm_pwd);
 	}
+
+#ifdef CONFIG_MACH_ACER_A1
+	// turn off the power rails of the sensor module
+	if (acer_hw_version >= 3)
+		gpio_direction_output(mt9p012_ctrl->sensordata->sensor_pwd, 0);
+
+	gp2 = vreg_get(0, "gp2");
+	gp3 = vreg_get(0, "gp3");
+	vreg_disable(gp3);
+	vreg_disable(gp2);
+#endif
 
 	kfree(mt9p012_ctrl);
 	mt9p012_ctrl = NULL;
@@ -1305,15 +1764,50 @@ static struct i2c_driver mt9p012_i2c_driver = {
 static int mt9p012_sensor_probe(const struct msm_camera_sensor_info *info,
 				struct msm_sensor_ctrl *s)
 {
+#ifdef CONFIG_MACH_ACER_A1
+	struct vreg *gp2, *gp3;
+#endif
+#ifdef USE_EEPROM
+	uint16_t eeprom_data = 0;
+	int i,j = 0;
+	uint16_t read_addr;
+#endif
+
 	int rc = i2c_add_driver(&mt9p012_i2c_driver);
 	if (rc < 0 || mt9p012_client == NULL) {
 		rc = -ENOTSUPP;
 		goto probe_done;
 	}
 
+#ifdef CONFIG_MACH_ACER_A1
+	/* power-up sequence */
+	gp2 = vreg_get(0, "gp2");
+	gp3 = vreg_get(0, "gp3");
+	vreg_enable(gp2);
+	vreg_enable(gp3);
+	msleep(1);
+	vreg_disable(gp2);
+	msleep(1);
+	vreg_enable(gp2);
+
+	if (acer_hw_version >= 3)
+		gpio_direction_output(info->sensor_pwd, 1);
+#endif
+
 	msm_camio_clk_rate_set(MT9P012_DEFAULT_CLOCK_RATE);
 	mdelay(20);
 
+#ifdef USE_EEPROM
+	for (i = 0,j = 0; i <= 204; i=i+2,j++) {
+		read_addr = i;
+		if (eeprom_i2c_read_w(MT9P012_EEPROM_ADDR >> 1,
+			read_addr, &eeprom_data) < 0) {
+		pr_err("EEPROM read failed at line %d ...\n", __LINE__);
+		}
+		CDBG("[CAM]eeprom_data  %d = 0x%x\n",j,eeprom_data);
+		eeprom_tbl[j].wdata = eeprom_data;
+	}
+#endif
 	rc = mt9p012_probe_init_sensor(info);
 	if (rc < 0)
 		goto probe_done;
@@ -1323,6 +1817,15 @@ static int mt9p012_sensor_probe(const struct msm_camera_sensor_info *info,
 	s->s_config = mt9p012_sensor_config;
 	s->s_mount_angle  = 0;
 	mt9p012_probe_init_done(info);
+
+#ifdef CONFIG_MACH_ACER_A1
+	// turn off the power rails of the sensor module
+	if (acer_hw_version >= 3)
+		gpio_direction_output(info->sensor_pwd, 0);
+
+	vreg_disable(gp3);
+	vreg_disable(gp2);
+#endif
 
 probe_done:
 	CDBG("%s %s:%d\n", __FILE__, __func__, __LINE__);

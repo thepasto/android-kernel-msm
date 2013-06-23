@@ -731,7 +731,9 @@ static int __msm_get_frame(struct msm_sync *sync,
 		goto err;
 	}
 
+#ifndef CONFIG_ACER_CAMERA_FROYO_USERSPACE
 	frame->ts = qcmd->ts;
+#endif
 	frame->buffer = (unsigned long)pmem_info.vaddr;
 	frame->y_off = pmem_info.y_off;
 	frame->cbcr_off = pmem_info.cbcr_off;
@@ -2317,8 +2319,9 @@ static int __msm_get_pic(struct msm_sync *sync,
 				__func__, pphy->y_phy, pphy->cbcr_phy);
 			goto err;
 		}
-
+#ifndef CONFIG_ACER_CAMERA_FROYO_USERSPACE
 		frame->ts = qcmd->ts;
+#endif
 		frame->buffer = (unsigned long)pmem_info.vaddr;
 		frame->y_off = pmem_info.y_off;
 		frame->cbcr_off = pmem_info.cbcr_off;
@@ -2337,7 +2340,9 @@ static int __msm_get_pic(struct msm_sync *sync,
 			pphy->cbcr_phy, (int) qcmd, (int) frame->buffer);
 	} else { /* PP */
 		pframe = (struct msm_frame *)(qcmd->command);
+#ifndef CONFIG_ACER_CAMERA_FROYO_USERSPACE
 		frame->ts = qcmd->ts;
+#endif
 		frame->buffer = pframe->buffer;
 		frame->y_off = pframe->y_off;
 		frame->cbcr_off = pframe->cbcr_off;

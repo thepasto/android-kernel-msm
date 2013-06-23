@@ -153,3 +153,9 @@ config QUP_EXCLUSIVE_TO_CAMERA
 	  by QUP in the board file as QUP is used by
 	  applications other than camera.
 
+config ACER_CAMERA_FROYO_USERSPACE
+	bool "Enable Acer FroYo userspace compatibility"
+	default y
+	---help---
+	  Be compatible with Acer FroYo userspace.
+	  Unset when Acer's libcamera* is compatible with 2.6.35.
