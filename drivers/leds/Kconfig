@@ -10,7 +10,7 @@ menuconfig NEW_LEDS
 if NEW_LEDS
 
 config LEDS_CLASS
-	tristate "LED Class Support"
+	bool "LED Class Support"
 	help
 	  This option enables the led sysfs class in /sys/class/leds.  You'll
 	  need this to do anything useful with LEDs.  If unsure, say N.
@@ -333,6 +333,13 @@ config LEDS_QCIBL
 	help
 	  Say Y here if you want to use the Quanta backlight driver for ST15
 	  platform.
+
+config LEDS_AVR
+	tristate "LED Support for Acer AVR device"
+	depends on LEDS_CLASS && AVR
+	help
+	  This option enables support for LEDs driven by Atmel AVR
+	  in Acer A1 devices.
 
 config LEDS_TRIGGERS
 	bool "LED Trigger support"
