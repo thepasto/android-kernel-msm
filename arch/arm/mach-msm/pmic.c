@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009, 2011 Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,6 +15,8 @@
  * 02110-1301, USA.
  *
  */
+
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/debugfs.h>
@@ -108,7 +110,16 @@
 #define LP_FORCE_LPM_CONTROL_PROC 70
 #define LOW_CURRENT_LED_SET_EXT_SIGNAL_PROC 71
 #define LOW_CURRENT_LED_SET_CURRENT_PROC 72
-
+#define SPKR_SET_VSEL_LDO_PROC 86
+#define HP_SPKR_CTRL_AUX_GAIN_INPUT_PROC 87
+#define HP_SPKR_MSTR_EN_PROC 88
+#define SPKR_SET_BOOST_PROC 89
+#define HP_SPKR_PRM_IN_EN_PROC 90
+#define HP_SPKR_CTRL_PRM_GAIN_INPUT_PROC 91
+#define HP_SPKR_MUTE_EN_PROC 92
+#define SPKR_BYPASS_EN_PROC 93
+#define HP_SPKR_AUX_IN_EN_PROC 94
+#define XO_CORE_FORCE_ENABLE 96
 
 /* rpc related */
 #define PMIC_RPC_TIMEOUT (5*HZ)
@@ -118,6 +129,7 @@
 #define PMIC_RPC_VER_1_1	0x00010001
 #define PMIC_RPC_VER_2_1	0x00020001
 #define PMIC_RPC_VER_3_1	0x00030001
+#define PMIC_RPC_VER_5_1	0x00050001
 
 /* error bit flags defined by modem side */
 #define PM_ERR_FLAG__PAR1_OUT_OF_RANGE		(0x0001)
@@ -152,6 +164,14 @@ struct pmic_ctrl {
 
 static struct pmic_ctrl pmic_ctrl = {
 	.inited = -1,
+};
+
+/* Add newer versions at the top of array */
+static const unsigned int rpc_vers[] = {
+	PMIC_RPC_VER_5_1,
+	PMIC_RPC_VER_3_1,
+	PMIC_RPC_VER_2_1,
+	PMIC_RPC_VER_1_1,
 };
 
 static int pmic_rpc_req_reply(struct pmic_buf *tbuf,
@@ -292,28 +312,31 @@ static int pmic_rpc_req_reply(struct pmic_buf *tbuf, struct pmic_buf *rbuf,
 	int	proc)
 {
 	struct pmic_ctrl *pm = &pmic_ctrl;
-	int	ans, len;
+	int	ans, len, i;
 
 
 	if ((pm->endpoint == NULL) || IS_ERR(pm->endpoint)) {
-		pm->endpoint = msm_rpc_connect_compatible(PMIC_RPC_PROG,
-					PMIC_RPC_VER_3_1, 0);
-		if (IS_ERR(pm->endpoint)) {
+		for (i = 0; i < ARRAY_SIZE(rpc_vers); i++) {
 			pm->endpoint = msm_rpc_connect_compatible(PMIC_RPC_PROG,
-						PMIC_RPC_VER_2_1, 0);
+					rpc_vers[i], 0);
+
 			if (IS_ERR(pm->endpoint)) {
-				pm->endpoint = msm_rpc_connect_compatible(
-						PMIC_RPC_PROG,
-						PMIC_RPC_VER_1_1, 0);
+				ans  = PTR_ERR(pm->endpoint);
+				printk(KERN_ERR "%s: init rpc failed! ans = %d"
+						" for 0x%x version, fallback\n",
+						__func__, ans, rpc_vers[i]);
+			} else {
+				printk(KERN_DEBUG "%s: successfully connected"
+					" to 0x%x rpc version\n",
+					 __func__, rpc_vers[i]);
+				break;
 			}
 		}
+	}
 
-		if (IS_ERR(pm->endpoint)) {
-			ans  = PTR_ERR(pm->endpoint);
-			printk(KERN_ERR "%s: init rpc failed! ans = %d\n",
-						__func__, ans);
-			return ans;
-		}
+	if (IS_ERR(pm->endpoint)) {
+		ans  = PTR_ERR(pm->endpoint);
+		return ans;
 	}
 
 	/*
@@ -903,6 +926,28 @@ int pmic_spkr_is_mute_en(enum spkr_left_right left_right, uint *enabled)
 }
 EXPORT_SYMBOL(pmic_spkr_is_mute_en);
 
+int pmic_spkr_set_vsel_ldo(enum spkr_left_right left_right,
+					enum spkr_ldo_v_sel vlt_cntrl)
+{
+	return pmic_rpc_set_only(left_right, vlt_cntrl, 0, 0, 2,
+			SPKR_SET_VSEL_LDO_PROC);
+}
+EXPORT_SYMBOL(pmic_spkr_set_vsel_ldo);
+
+int pmic_spkr_set_boost(enum spkr_left_right left_right, uint enable)
+{
+	return pmic_rpc_set_only(left_right, enable, 0, 0, 2,
+			SPKR_SET_BOOST_PROC);
+}
+EXPORT_SYMBOL(pmic_spkr_set_boost);
+
+int pmic_spkr_bypass_en(enum spkr_left_right left_right, uint enable)
+{
+	return pmic_rpc_set_only(left_right, enable, 0, 0, 2,
+			SPKR_BYPASS_EN_PROC);
+}
+EXPORT_SYMBOL(pmic_spkr_bypass_en);
+
 /*
  * 	mic
  */
@@ -1120,3 +1165,56 @@ int pmic_low_current_led_set_current(enum low_current_led led,
 			LOW_CURRENT_LED_SET_CURRENT_PROC);
 }
 EXPORT_SYMBOL(pmic_low_current_led_set_current);
+
+/*
+ * Head phone speaker
+ */
+int pmic_hp_spkr_mstr_en(enum hp_spkr_left_right left_right, uint enable)
+{
+	return pmic_rpc_set_only(left_right, enable, 0, 0, 2,
+			HP_SPKR_MSTR_EN_PROC);
+}
+EXPORT_SYMBOL(pmic_hp_spkr_mstr_en);
+
+int pmic_hp_spkr_mute_en(enum hp_spkr_left_right left_right, uint enable)
+{
+	return pmic_rpc_set_only(left_right, enable, 0, 0, 2,
+			HP_SPKR_MUTE_EN_PROC);
+}
+EXPORT_SYMBOL(pmic_hp_spkr_mute_en);
+
+int pmic_hp_spkr_prm_in_en(enum hp_spkr_left_right left_right, uint enable)
+{
+	return pmic_rpc_set_only(left_right, enable, 0, 0, 2,
+			HP_SPKR_PRM_IN_EN_PROC);
+}
+EXPORT_SYMBOL(pmic_hp_spkr_prm_in_en);
+
+int pmic_hp_spkr_aux_in_en(enum hp_spkr_left_right left_right, uint enable)
+{
+	return pmic_rpc_set_only(left_right, enable, 0, 0, 2,
+			HP_SPKR_AUX_IN_EN_PROC);
+}
+EXPORT_SYMBOL(pmic_hp_spkr_aux_in_en);
+
+int pmic_hp_spkr_ctrl_prm_gain_input(enum hp_spkr_left_right left_right,
+							uint prm_gain_ctl)
+{
+	return pmic_rpc_set_only(left_right, prm_gain_ctl, 0, 0, 2,
+			HP_SPKR_CTRL_PRM_GAIN_INPUT_PROC);
+}
+EXPORT_SYMBOL(pmic_hp_spkr_ctrl_prm_gain_input);
+
+int pmic_hp_spkr_ctrl_aux_gain_input(enum hp_spkr_left_right left_right,
+							uint aux_gain_ctl)
+{
+	return pmic_rpc_set_only(left_right, aux_gain_ctl, 0, 0, 2,
+			HP_SPKR_CTRL_AUX_GAIN_INPUT_PROC);
+}
+EXPORT_SYMBOL(pmic_hp_spkr_ctrl_aux_gain_input);
+
+int pmic_xo_core_force_enable(uint enable)
+{
+	return pmic_rpc_set_only(enable, 0, 0, 0, 1, XO_CORE_FORCE_ENABLE);
+}
+EXPORT_SYMBOL(pmic_xo_core_force_enable);

@@ -3,7 +3,7 @@
  * MSM architecture clock driver
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2007-2011, Code Aurora Forum. All rights reserved.
  * Author: San Mehat <san@android.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -32,12 +32,11 @@
 #include <mach/board.h>
 #include <mach/msm_iomap.h>
 #include <asm/mach-types.h>
+#include <mach/socinfo.h>
 
 #include "proc_comm.h"
 #include "smd_private.h"
-#include "clock.h"
 #include "acpuclock.h"
-#include "socinfo.h"
 
 #define A11S_CLK_CNTL_ADDR (MSM_CSR_BASE + 0x100)
 #define A11S_CLK_SEL_ADDR (MSM_CSR_BASE + 0x104)
@@ -57,14 +56,14 @@ enum {
 	ACPU_PLL_END,
 };
 
-struct clock_state
-{
+struct clock_state {
 	struct clkctl_acpu_speed	*current_speed;
 	struct mutex			lock;
 	uint32_t			acpu_switch_time_us;
 	uint32_t			max_speed_delta_khz;
 	uint32_t			vdd_switch_time_us;
 	unsigned long			max_axi_khz;
+	struct clk			*ebi1_clk;
 };
 
 #define PLL_BASE	7
@@ -323,12 +322,6 @@ static void __init cpufreq_table_init(void)
 }
 #endif
 
-unsigned long clk_get_max_axi_khz(void)
-{
-	return drv_state.max_axi_khz;
-}
-EXPORT_SYMBOL(clk_get_max_axi_khz);
-
 static int pc_pll_request(unsigned id, unsigned on)
 {
 	int res = 0;
@@ -348,6 +341,7 @@ static int pc_pll_request(unsigned id, unsigned on)
 			pll_control->pll[PLL_BASE + id].votes |= 2;
 			if (!pll_control->pll[PLL_BASE + id].on) {
 				writel(6, PLLn_MODE(id));
+				dsb();
 				udelay(50);
 				writel(7, PLLn_MODE(id));
 				pll_control->pll[PLL_BASE + id].on = 1;
@@ -408,6 +402,7 @@ static int acpuclk_set_vdd_level(int vdd)
 	       current_vdd, vdd);
 
 	writel((1 << 7) | (vdd << 3), A11S_VDD_SVS_PLEVEL_ADDR);
+	dsb();
 	udelay(drv_state.vdd_switch_time_us);
 	if ((readl(A11S_VDD_SVS_PLEVEL_ADDR) & 0x7) != vdd) {
 		pr_err("VDD set failed\n");
@@ -420,7 +415,8 @@ static int acpuclk_set_vdd_level(int vdd)
 }
 
 /* Set proper dividers for the given clock speed. */
-static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
+static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s)
+{
 	uint32_t reg_clkctl, reg_clksel, clk_div, src_sel;
 
 	reg_clksel = readl(A11S_CLK_SEL_ADDR);
@@ -593,6 +589,7 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 		drv_state.current_speed = cur_s;
 		/* Re-adjust lpj for the new clock speed. */
 		loops_per_jiffy = cur_s->lpj;
+		dsb();
 		udelay(drv_state.acpu_switch_time_us);
 	}
 
@@ -602,8 +599,8 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 
 	/* Change the AXI bus frequency if we can. */
 	if (strt_s->axiclk_khz != tgt_s->axiclk_khz) {
-		res = ebi1_clk_set_min_rate(CLKVOTE_ACPUCLK,
-						tgt_s->axiclk_khz * 1000);
+		res = clk_set_rate(drv_state.ebi1_clk,
+				tgt_s->axiclk_khz * 1000);
 		if (res < 0)
 			pr_warning("Setting AXI min rate failed (%d)\n", res);
 	}
@@ -683,9 +680,12 @@ static void __init acpuclk_init(void)
 		if (pc_pll_request(speed->pll, 1))
 			pr_warning("Failed to vote for boot PLL\n");
 
-	res = ebi1_clk_set_min_rate(CLKVOTE_ACPUCLK, speed->axiclk_khz * 1000);
+	res = clk_set_rate(drv_state.ebi1_clk, speed->axiclk_khz * 1000);
 	if (res < 0)
 		pr_warning("Setting AXI min rate failed (%d)\n", res);
+	res = clk_enable(drv_state.ebi1_clk);
+	if (res < 0)
+		pr_warning("Enabling AXI clock failed (%d)\n", res);
 
 	pr_info("ACPU running at %d KHz\n", speed->a11clk_khz);
 }
@@ -922,6 +922,9 @@ static void shared_pll_control_init(void)
 void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 {
 	pr_info("acpu_clock_init()\n");
+
+	drv_state.ebi1_clk = clk_get(NULL, "ebi1_acpu_clk");
+	BUG_ON(IS_ERR(drv_state.ebi1_clk));
 
 	mutex_init(&drv_state.lock);
 	if (cpu_is_msm7x27())

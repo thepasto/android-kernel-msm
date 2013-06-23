@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
  *
  * Based on the mp3 native driver in arch/arm/mach-msm/qdsp5v2/audio_mp3.c
  *
@@ -38,7 +38,7 @@
 #include <mach/msm_adsp.h>
 
 #include <linux/msm_audio.h>
-
+#include <linux/slab.h>
 #include <linux/msm_audio_wmapro.h>
 #include <mach/qdsp5v2/qdsp5audppmsg.h>
 #include <mach/qdsp5v2/qdsp5audplaycmdi.h>
@@ -201,6 +201,7 @@ static int audio_enable(struct audio *audio)
 	if (audio->enabled)
 		return 0;
 
+	audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 	audio->out_tail = 0;
 	audio->out_needed = 0;
 
@@ -428,6 +429,8 @@ static void audio_dsp_event(void *private, unsigned id, uint16_t *msg)
 		wake_up(&audio->write_wait);
 		if (audio->pcm_feedback)
 			audplay_buffer_refresh(audio);
+		break;
+
 	case AUDPP_MSG_PCMDMAMISSED:
 		MM_DBG("PCMDMAMISSED\n");
 		audio->teos = 1;
@@ -905,7 +908,6 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 	case AUDIO_START:
 		MM_DBG("AUDIO_START\n");
-		audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 		rc = audio_enable(audio);
 		if (!rc) {
 			rc = wait_event_interruptible_timeout(audio->wait,
@@ -1120,7 +1122,7 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 
 /* Only useful in tunnel-mode */
-static int audio_fsync(struct file *file, struct dentry *dentry, int datasync)
+static int audio_fsync(struct file *file, int datasync)
 {
 	struct audio *audio = file->private_data;
 	struct buffer *frame;

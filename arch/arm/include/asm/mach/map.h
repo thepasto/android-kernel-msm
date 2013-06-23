@@ -28,11 +28,20 @@ struct map_desc {
 #define MT_ROM			10
 #define MT_MEMORY_NONCACHED	11
 #define MT_DEVICE_STRONGLY_ORDERED 12
+#define MT_MEMORY_R		13
+#define MT_MEMORY_RW		14
+#define MT_MEMORY_RX		15
 
 #ifdef CONFIG_MMU
 extern void iotable_init(struct map_desc *, int);
 
-struct mem_type;
+struct mem_type {
+	unsigned int prot_pte;
+	unsigned int prot_l1;
+	unsigned int prot_sect;
+	unsigned int domain;
+};
+
 extern const struct mem_type *get_mem_type(unsigned int type);
 /*
  * external interface to remap single page with appropriate type

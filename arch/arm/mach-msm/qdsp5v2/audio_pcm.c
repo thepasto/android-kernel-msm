@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2008 Google, Inc.
  * Copyright (C) 2008 HTC Corporation
- * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -41,6 +41,7 @@
 #include <mach/qdsp5v2/qdsp5audplaymsg.h>
 #include <mach/qdsp5v2/audpp.h>
 #include <mach/debug_mm.h>
+#include <linux/slab.h>
 
 #define ADRV_STATUS_AIO_INTF 0x00000001
 #define ADRV_STATUS_OBUF_GIVEN 0x00000002
@@ -255,6 +256,7 @@ static int audio_enable(struct audio *audio)
 	if (audio->enabled)
 		return 0;
 
+	audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 	audio->out_tail = 0;
 	audio->out_needed = 0;
 
@@ -313,6 +315,11 @@ static void audplay_dsp_event(void *data, unsigned id, size_t len,
 	case AUDPLAY_MSG_DEC_NEEDS_DATA:
 		audio->drv_ops.send_data(audio, 1);
 		break;
+
+	case ADSP_MESSAGE_ID:
+		MM_DBG("Received ADSP event:module audplaytask\n");
+		break;
+
 	default:
 		MM_ERR("unexpected message from decoder\n");
 		break;
@@ -1014,7 +1021,6 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 	case AUDIO_START:
 		MM_DBG("AUDIO_START\n");
-		audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 		rc = audio_enable(audio);
 		if (!rc) {
 			rc = wait_event_interruptible_timeout(audio->wait,
@@ -1249,7 +1255,7 @@ done:
 	return rc;
 }
 
-int audpcm_fsync(struct file *file, struct dentry *dentry, int datasync)
+int audpcm_fsync(struct file *file, int datasync)
 {
 	struct audio *audio = file->private_data;
 

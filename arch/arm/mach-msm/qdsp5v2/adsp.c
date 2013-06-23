@@ -2,7 +2,7 @@
  * Register/Interrupt access for userspace aDSP library.
  *
  * Copyright (C) 2008 Google, Inc.
- * Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2008-2009,2011 Code Aurora Forum. All rights reserved.
  * Author: Iliyan Malchev <ibm@android.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -31,7 +31,7 @@
 #include <linux/module.h>
 #include <linux/uaccess.h>
 #include <linux/wait.h>
-
+#include <linux/slab.h>
 #include <linux/io.h>
 #include <mach/msm_iomap.h>
 #include <mach/clk.h>
@@ -429,7 +429,7 @@ int msm_adsp_write(struct msm_adsp_module *module, unsigned dsp_queue_addr,
 								cmd_size);
 		if (rc == -EAGAIN)
 			udelay(50);
-	} while (rc == -EAGAIN && retries++ < 100);
+	} while (rc == -EAGAIN && retries++ < 300);
 	if (retries > 20)
 		MM_INFO("%s command took %d attempts: rc %d\n",
 			module->name, retries, rc);
@@ -931,7 +931,7 @@ static int msm_adsp_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	adsp_info.raw_event = kzalloc(
-		(sizeof(struct adsp_rtos_mp_mtoa_init_info_type)), GFP_KERNEL);
+		(sizeof(struct adsp_rtos_mp_mtoa_s_type)), GFP_KERNEL);
 	if (!adsp_info.raw_event) {
 		kfree(adsp_info.init_info_ptr);
 		return -ENOMEM;

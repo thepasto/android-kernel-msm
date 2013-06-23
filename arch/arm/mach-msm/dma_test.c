@@ -16,6 +16,7 @@
  *
  */
 
+#include <linux/slab.h>
 #include <linux/dma-mapping.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -144,7 +145,7 @@ static int dma_scopy(struct msm_dma_scopy *scopy, struct private *priv)
 					sizeof(*priv->command_ptr_ptr),
 					DMA_TO_DEVICE);
 
-	msm_dmov_exec_cmd(TEST_CHANNEL, 0,
+	msm_dmov_exec_cmd(TEST_CHANNEL,
 			  DMOV_CMD_PTR_LIST | DMOV_CMD_ADDR(mapped_cmd_ptr));
 
 	dma_unmap_single(NULL, (dma_addr_t) mapped_cmd_ptr,
@@ -345,7 +346,7 @@ static int dma_test_init(void)
 	for (i = 0; i < MAX_TEST_BUFFERS; i++)
 		init_MUTEX(&buffer_sems[i]);
 
-	printk(KERN_ALERT "%s\n", __func__);
+	printk(KERN_ALERT "%s, minor number %d\n", __func__, dma_test_dev.minor);
 	return 0;
 }
 

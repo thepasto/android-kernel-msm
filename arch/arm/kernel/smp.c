@@ -86,6 +86,12 @@ int __cpuinit __cpu_up(unsigned int cpu)
 			return PTR_ERR(idle);
 		}
 		ci->idle = idle;
+	} else {
+		/*
+		 * Since this idle thread is being re-used, call
+		 * init_idle() to reinitialize the thread structure.
+		 */
+		init_idle(idle, cpu);
 	}
 
 	/*
@@ -99,6 +105,7 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	*pmd = __pmd((PHYS_OFFSET & PGDIR_MASK) |
 		     PMD_TYPE_SECT | PMD_SECT_AP_WRITE);
 	flush_pmd_entry(pmd);
+	outer_clean_range(__pa(pmd), __pa(pmd + 1));
 
 	/*
 	 * We need to tell the secondary core where to find
@@ -106,7 +113,8 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	 */
 	secondary_data.stack = task_stack_page(idle) + THREAD_START_SP;
 	secondary_data.pgdir = virt_to_phys(pgd);
-	wmb();
+	__cpuc_flush_dcache_area(&secondary_data, sizeof(secondary_data));
+	outer_clean_range(__pa(&secondary_data), __pa(&secondary_data + 1));
 
 	/*
 	 * Now bring the CPU into our world.
@@ -160,7 +168,7 @@ int __cpu_disable(void)
 	struct task_struct *p;
 	int ret;
 
-	ret = mach_cpu_disable(cpu);
+	ret = platform_cpu_disable(cpu);
 	if (ret)
 		return ret;
 
@@ -248,8 +256,6 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 {
 	struct mm_struct *mm = &init_mm;
 	unsigned int cpu = smp_processor_id();
-
-	printk("CPU%u: Booted secondary processor\n", cpu);
 
 	/*
 	 * All kernel threads share the same mm context; grab a
@@ -459,10 +465,13 @@ static DEFINE_SPINLOCK(stop_lock);
  */
 static void ipi_cpu_stop(unsigned int cpu)
 {
-	spin_lock(&stop_lock);
-	printk(KERN_CRIT "CPU%u: stopping\n", cpu);
-	dump_stack();
-	spin_unlock(&stop_lock);
+	if (system_state == SYSTEM_BOOTING ||
+	    system_state == SYSTEM_RUNNING) {
+		spin_lock(&stop_lock);
+		printk(KERN_CRIT "CPU%u: stopping\n", cpu);
+		dump_stack();
+		spin_unlock(&stop_lock);
+	}
 
 	set_cpu_online(cpu, false);
 
@@ -545,6 +554,11 @@ asmlinkage void __exception do_IPI(struct pt_regs *regs)
 
 void smp_send_reschedule(int cpu)
 {
+	if (unlikely(cpu_is_offline(cpu))) {
+		pr_warn("%s: attempt to send resched-IPI to an offline cpu.\n",
+				__func__);
+		return;
+	}
 	send_ipi_message(cpumask_of(cpu), IPI_RESCHEDULE);
 }
 
@@ -552,7 +566,8 @@ void smp_send_stop(void)
 {
 	cpumask_t mask = cpu_online_map;
 	cpu_clear(smp_processor_id(), mask);
-	send_ipi_message(&mask, IPI_CPU_STOP);
+	if (!cpus_empty(mask))
+		send_ipi_message(&mask, IPI_CPU_STOP);
 }
 
 /*

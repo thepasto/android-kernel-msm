@@ -14,6 +14,7 @@
  *
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
@@ -298,6 +299,7 @@ static struct dal_channel *dal_open_channel(const char *name, uint32_t cpu)
 {
 	struct dal_channel *dch;
 
+	pr_debug("[%s:%s]\n", __MM_FILE__, __func__);
 	mutex_lock(&dal_channel_list_lock);
 
 	list_for_each_entry(dch, &dal_channel_list, list) {
@@ -348,9 +350,10 @@ int dal_call_raw(struct dal_client *client,
 	client->status = -EBUSY;
 
 #if DAL_TRACE
-	pr_info("[%s:%s] dal send %p -> %p %02x:%04x:%02x %d\n",
-		__MM_FILE__, __func__, hdr->from, hdr->to, hdr->msgid,
-		hdr->ddi, hdr->prototype, hdr->length - sizeof(*hdr));
+	pr_info("[%s:%s:%x] dal send %p -> %p %02x:%04x:%02x %d\n",
+		__MM_FILE__, __func__, (unsigned int)client, hdr->from, hdr->to,
+		hdr->msgid, hdr->ddi, hdr->prototype,
+		hdr->length - sizeof(*hdr));
 	print_hex_dump_bytes("", DUMP_PREFIX_OFFSET, data, data_len);
 #endif
 
@@ -424,6 +427,7 @@ struct dal_client *dal_attach(uint32_t device_id, const char *name,
 	unsigned long flags;
 	int r;
 
+	pr_debug("[%s:%s]\n", __MM_FILE__, __func__);
 	dch = dal_open_channel(name, cpu);
 	if (!dch)
 		return 0;
@@ -457,8 +461,9 @@ struct dal_client *dal_attach(uint32_t device_id, const char *name,
 
 	if ((r == sizeof(reply)) && (reply.status == 0)) {
 		reply.name[63] = 0;
-		pr_info("[%s:%s] status = %d, name = '%s'\n", __MM_FILE__,
-				__func__, reply.status, reply.name);
+		pr_info("[%s:%s] status = %d, name = '%s' dal_client %x\n",
+			__MM_FILE__, __func__, reply.status,
+			reply.name, (unsigned int)client);
 		return client;
 	}
 
@@ -473,6 +478,7 @@ int dal_detach(struct dal_client *client)
 	struct dal_channel *dch;
 	unsigned long flags;
 
+	pr_debug("[%s:%s]\n", __MM_FILE__, __func__);
 	mutex_lock(&client->write_lock);
 	if (client->remote) {
 		struct dal_hdr hdr;
@@ -603,6 +609,36 @@ int dal_call_f9(struct dal_client *client, uint32_t ddi, void *obuf,
 	if (res >= 4)
 		res = (int)tmp[0];
 
+	if (!res) {
+		if (tmp[1] > olen)
+			return -EIO;
+		memcpy(obuf, &tmp[2], tmp[1]);
+	}
+	return res;
+}
+
+int dal_call_f11(struct dal_client *client, uint32_t ddi, uint32_t s1,
+		void *obuf, uint32_t olen)
+{
+	uint32_t tmp[DAL_DATA_MAX/4] = {0};
+	int res;
+	int param_idx = 0;
+	int num_bytes = 4;
+
+	num_bytes += (DIV_ROUND_UP(olen, 4)) * 4;
+
+	if ((num_bytes > DAL_DATA_MAX - 12) || (olen > DAL_DATA_MAX - 8))
+		return -EINVAL;
+
+	tmp[param_idx] = s1;
+	param_idx++;
+	tmp[param_idx] = olen;
+	param_idx += DIV_ROUND_UP(olen, 4);
+
+	res = dal_call(client, ddi, 11, tmp, param_idx * 4, tmp, sizeof(tmp));
+
+	if (res >= 4)
+		res = (int) tmp[0];
 	if (!res) {
 		if (tmp[1] > olen)
 			return -EIO;

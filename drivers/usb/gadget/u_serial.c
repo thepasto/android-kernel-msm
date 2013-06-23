@@ -4,7 +4,6 @@
  * Copyright (C) 2003 Al Borchers (alborchers@steinerpoint.com)
  * Copyright (C) 2008 David Brownell
  * Copyright (C) 2008 by Nokia Corporation
- * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * This code also borrows from usbserial.c, which is
  * Copyright (C) 1999 - 2002 Greg Kroah-Hartman (greg@kroah.com)
@@ -24,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/tty.h>
 #include <linux/tty_flip.h>
+#include <linux/slab.h>
 
 #include "u_serial.h"
 
@@ -374,13 +374,17 @@ __acquires(&port->port_lock)
 		len = gs_send_packet(port, req->buf, TX_BUF_SIZE);
 		if (len == 0) {
 			/* Queue zero length packet */
-			if (prev_len & (prev_len % in->maxpacket == 0)) {
+			if (prev_len && (prev_len % in->maxpacket == 0)) {
 				req->length = 0;
 				list_del(&req->list);
 
 				spin_unlock(&port->port_lock);
 				status = usb_ep_queue(in, req, GFP_ATOMIC);
 				spin_lock(&port->port_lock);
+				if (!port->port_usb) {
+					gs_free_req(in, req);
+					break;
+				}
 				if (status) {
 					printk(KERN_ERR "%s: %s err %d\n",
 					__func__, "queue", status);
@@ -410,7 +414,16 @@ __acquires(&port->port_lock)
 		spin_unlock(&port->port_lock);
 		status = usb_ep_queue(in, req, GFP_ATOMIC);
 		spin_lock(&port->port_lock);
-
+		/*
+		 * If port_usb is NULL, gserial disconnect is called
+		 * while the spinlock is dropped and all requests are
+		 * freed. Free the current request here.
+		 */
+		if (!port->port_usb) {
+			do_tty_wake = false;
+			gs_free_req(in, req);
+			break;
+		}
 		if (status) {
 			pr_debug("%s: %s %s err %d\n",
 					__func__, "queue", in->name, status);
@@ -419,9 +432,6 @@ __acquires(&port->port_lock)
 		}
 		prev_len = req->length;
 
-		/* abort immediately after disconnect */
-		if (!port->port_usb)
-			break;
 	}
 
 	if (do_tty_wake && port->port_tty)
@@ -462,7 +472,16 @@ __acquires(&port->port_lock)
 		spin_unlock(&port->port_lock);
 		status = usb_ep_queue(out, req, GFP_ATOMIC);
 		spin_lock(&port->port_lock);
-
+		/*
+		 * If port_usb is NULL, gserial disconnect is called
+		 * while the spinlock is dropped and all requests are
+		 * freed. Free the current request here.
+		 */
+		if (!port->port_usb) {
+			started = 0;
+			gs_free_req(out, req);
+			break;
+		}
 		if (status) {
 			pr_debug("%s: %s %s err %d\n",
 					__func__, "queue", out->name, status);
@@ -471,9 +490,6 @@ __acquires(&port->port_lock)
 		}
 		started++;
 
-		/* abort immediately after disconnect */
-		if (!port->port_usb)
-			break;
 	}
 	return started;
 }
@@ -709,6 +725,8 @@ static int gs_start_io(struct gs_port *port)
 	port->n_read = 0;
 	started = gs_start_rx(port);
 
+	if (!port->port_usb)
+		return -EIO;
 	/* unblock any pending writes into our circular buffer */
 	if (started) {
 		tty_wakeup(port->port_tty);
@@ -1308,6 +1326,7 @@ void gserial_cleanup(void)
 
 	destroy_workqueue(gserial_wq);
 	tty_unregister_driver(gs_tty_driver);
+	put_tty_driver(gs_tty_driver);
 	gs_tty_driver = NULL;
 
 	pr_debug("%s: cleaned up ttyGS* support\n", __func__);
@@ -1427,8 +1446,6 @@ void gserial_disconnect(struct gserial *gser)
 	spin_unlock_irqrestore(&port->port_lock, flags);
 
 	/* disable endpoints, aborting down any active I/O */
-	usb_ep_fifo_flush(gser->out);
-	usb_ep_fifo_flush(gser->in);
 	usb_ep_disable(gser->out);
 	gser->out->driver_data = NULL;
 

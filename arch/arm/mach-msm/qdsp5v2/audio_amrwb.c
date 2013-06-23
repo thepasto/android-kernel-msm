@@ -1,6 +1,6 @@
 /* amrwb audio decoder device
  *
- * Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2008-2011, Code Aurora Forum. All rights reserved.
  *
  * Based on the mp3 native driver in arch/arm/mach-msm/qdsp5v2/audio_mp3.c
  *
@@ -39,7 +39,7 @@
 #include <asm/ioctls.h>
 #include <mach/msm_adsp.h>
 #include <linux/msm_audio.h>
-
+#include <linux/slab.h>
 #include <mach/qdsp5v2/qdsp5audppmsg.h>
 #include <mach/qdsp5v2/qdsp5audplaycmdi.h>
 #include <mach/qdsp5v2/qdsp5audplaymsg.h>
@@ -197,6 +197,7 @@ static int audamrwb_enable(struct audio *audio)
 	if (audio->enabled)
 		return 0;
 
+	audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 	audio->out_tail = 0;
 	audio->out_needed = 0;
 
@@ -327,6 +328,10 @@ static void audplay_dsp_event(void *data, unsigned id, size_t len,
 
 	case AUDPLAY_MSG_BUFFER_UPDATE:
 		audamrwb_update_pcm_buf_entry(audio, msg);
+		break;
+
+	case ADSP_MESSAGE_ID:
+		MM_DBG("Received ADSP event:module audplaytask\n");
 		break;
 
 	default:
@@ -867,7 +872,6 @@ static long audamrwb_ioctl(struct file *file, unsigned int cmd,
 	switch (cmd) {
 	case AUDIO_START:
 		MM_DBG("AUDIO_START\n");
-		audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 		rc = audamrwb_enable(audio);
 		if (!rc) {
 			rc = wait_event_interruptible_timeout(audio->wait,
@@ -1042,8 +1046,7 @@ static long audamrwb_ioctl(struct file *file, unsigned int cmd,
 }
 
 /* Only useful in tunnel-mode */
-static int audamrwb_fsync(struct file *file, struct dentry *dentry,
-			int datasync)
+static int audamrwb_fsync(struct file *file, int datasync)
 {
 	struct audio *audio = file->private_data;
 	struct buffer *frame;

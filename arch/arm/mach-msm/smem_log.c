@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2008-2011, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -19,6 +19,7 @@
  * Shared memory logging implementation.
  */
 
+#include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -39,6 +40,7 @@
 
 #include "smd_private.h"
 #include "smd_rpc_sym.h"
+#include "modem_notifier.h"
 
 #define DEBUG
 #undef DEBUG
@@ -62,7 +64,11 @@ do { \
 #define D(x...) do {} while (0)
 #endif
 
-#define TIMESTAMP_ADDR (MSM_CSR_BASE + 0x04)
+#if defined(CONFIG_ARCH_MSM7X30) || defined(CONFIG_ARCH_MSM8X60)
+#define TIMESTAMP_ADDR (MSM_TMR_BASE + 0x08)
+#else
+#define TIMESTAMP_ADDR (MSM_TMR_BASE + 0x04)
+#endif
 
 struct smem_log_item {
 	uint32_t identifier;
@@ -91,6 +97,8 @@ struct smem_log_item {
 static remote_spinlock_t remote_spinlock;
 static remote_spinlock_t remote_spinlock_static;
 static uint32_t smem_log_enable;
+static int smem_log_initialized;
+
 module_param_named(log_enable, smem_log_enable, int,
 		   S_IRUGO | S_IWUSR | S_IWGRP);
 
@@ -622,9 +630,13 @@ static inline unsigned int read_timestamp(void)
 {
 	unsigned int tick = 0;
 
+	/* no barriers necessary as the read value is a dependency for the
+	 * comparison operation so the processor shouldn't be able to
+	 * reorder things
+	 */
 	do {
-		tick = readl(TIMESTAMP_ADDR);
-	} while (tick != readl(TIMESTAMP_ADDR));
+		tick = __raw_readl(TIMESTAMP_ADDR);
+	} while (tick != __raw_readl(TIMESTAMP_ADDR));
 
 	return tick;
 }
@@ -680,6 +692,7 @@ static void smem_log_event_from_user(struct smem_log_inst *inst,
 	}
 
  out:
+	wmb();
 	remote_spin_unlock_irqrestore(inst->remote_spinlock, flags);
 }
 
@@ -715,6 +728,7 @@ static void _smem_log_event(
 	if (next_idx >= num)
 		next_idx = 0;
 	*_idx = next_idx;
+	wmb();
 
 	remote_spin_unlock_irqrestore(lock, flags);
 }
@@ -757,7 +771,7 @@ static void _smem_log_event6(
 	if (next_idx >= num)
 		next_idx = 0;
 	*_idx = next_idx;
-
+	wmb();
 	remote_spin_unlock_irqrestore(lock, flags);
 }
 
@@ -813,10 +827,9 @@ static int _smem_log_init(void)
 						  SMEM_LOG_EVENTS_SIZE);
 	inst[GEN].idx = (uint32_t *)smem_alloc(SMEM_SMEM_LOG_IDX,
 					     sizeof(uint32_t));
-	if (!inst[GEN].events || !inst[GEN].idx) {
-		pr_err("%s: no log or log_idx allocated, "
-		       "smem_log disabled\n", __func__);
-	}
+	if (!inst[GEN].events || !inst[GEN].idx)
+		pr_info("%s: no log or log_idx allocated\n", __func__);
+
 	inst[GEN].num = SMEM_LOG_NUM_ENTRIES;
 	inst[GEN].read_idx = 0;
 	inst[GEN].last_read_avail = SMEM_LOG_NUM_ENTRIES;
@@ -830,10 +843,9 @@ static int _smem_log_init(void)
 			   SMEM_STATIC_LOG_EVENTS_SIZE);
 	inst[STA].idx = (uint32_t *)smem_alloc(SMEM_SMEM_STATIC_LOG_IDX,
 						     sizeof(uint32_t));
-	if (!inst[STA].events || !inst[STA].idx) {
-		pr_err("%s: no static log or log_idx "
-		       "allocated, smem_log disabled\n", __func__);
-	}
+	if (!inst[STA].events || !inst[STA].idx)
+		pr_info("%s: no static log or log_idx allocated\n", __func__);
+
 	inst[STA].num = SMEM_LOG_NUM_STATIC_ENTRIES;
 	inst[STA].read_idx = 0;
 	inst[STA].last_read_avail = SMEM_LOG_NUM_ENTRIES;
@@ -847,10 +859,9 @@ static int _smem_log_init(void)
 			   SMEM_POWER_LOG_EVENTS_SIZE);
 	inst[POW].idx = (uint32_t *)smem_alloc(SMEM_SMEM_LOG_POWER_IDX,
 						     sizeof(uint32_t));
-	if (!inst[POW].events || !inst[POW].idx) {
-		pr_err("%s: no power log or log_idx "
-		       "allocated, smem_log disabled\n", __func__);
-	}
+	if (!inst[POW].events || !inst[POW].idx)
+		pr_info("%s: no power log or log_idx allocated\n", __func__);
+
 	inst[POW].num = SMEM_LOG_NUM_POWER_ENTRIES;
 	inst[POW].read_idx = 0;
 	inst[POW].last_read_avail = SMEM_LOG_NUM_ENTRIES;
@@ -859,15 +870,20 @@ static int _smem_log_init(void)
 
 	ret = remote_spin_lock_init(&remote_spinlock,
 			      SMEM_SPINLOCK_SMEM_LOG);
-	if (ret)
+	if (ret) {
+		dsb();
 		return ret;
+	}
 
 	ret = remote_spin_lock_init(&remote_spinlock_static,
 			      SMEM_SPINLOCK_STATIC_LOG);
-	if (ret)
+	if (ret) {
+		dsb();
 		return ret;
+	}
 
 	init_syms();
+	dsb();
 
 	return 0;
 }
@@ -1000,7 +1016,7 @@ static ssize_t smem_log_write(struct file *fp, const char __user *buf,
 	int ret;
 	const char delimiters[] = " ,;";
 	char locbuf[256] = {0};
-	uint32_t val[10];
+	uint32_t val[10] = {0};
 	int vals = 0;
 	char *token;
 	char *running;
@@ -1008,12 +1024,6 @@ static ssize_t smem_log_write(struct file *fp, const char __user *buf,
 	unsigned long res;
 
 	inst = fp->private_data;
-
-	if (count < 0) {
-		printk(KERN_ERR "ERROR: %s passed neg count = %i\n",
-		       __func__, count);
-		return -EINVAL;
-	}
 
 	count = count > 255 ? 255 : count;
 
@@ -1901,18 +1911,50 @@ static void smem_log_debugfs_init(void)
 static void smem_log_debugfs_init(void) {}
 #endif
 
-static int __init smem_log_init(void)
+static int smem_log_initialize(void)
 {
 	int ret;
 
 	ret = _smem_log_init();
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err("%s: init failed %d\n", __func__, ret);
 		return ret;
+	}
+
+	ret = misc_register(&smem_log_dev);
+	if (ret < 0) {
+		pr_err("%s: device register failed %d\n", __func__, ret);
+		return ret;
+	}
 
 	smem_log_enable = 1;
+	smem_log_initialized = 1;
 	smem_log_debugfs_init();
+	return ret;
+}
 
-	return misc_register(&smem_log_dev);
+static int modem_notifier(struct notifier_block *this,
+			  unsigned long code,
+			  void *_cmd)
+{
+	switch (code) {
+	case MODEM_NOTIFIER_SMSM_INIT:
+		if (!smem_log_initialized)
+			smem_log_initialize();
+		break;
+	default:
+		break;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block nb = {
+	.notifier_call = modem_notifier,
+};
+
+static int __init smem_log_init(void)
+{
+	return modem_register_notifier(&nb);
 }
 
 

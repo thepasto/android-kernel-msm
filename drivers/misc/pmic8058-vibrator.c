@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,6 +24,8 @@
 #include <linux/pmic8058-vibrator.h>
 #include <linux/mfd/pmic8058.h>
 #include <linux/pm.h>
+#include <linux/pm_runtime.h>
+#include <linux/slab.h>
 
 #include "../staging/android/timed_output.h"
 
@@ -93,6 +95,10 @@ static int pmic8058_vib_set(struct pmic8058_vib *vib, int on)
 	u8 val;
 
 	if (on) {
+		rc = pm_runtime_resume(vib->dev);
+		if (rc < 0)
+			dev_dbg(vib->dev, "pm_runtime_resume failed\n");
+
 		val = vib->reg_vib_drv;
 		val |= ((vib->level << VIB_DRV_SEL_SHIFT) & VIB_DRV_SEL_MASK);
 		rc = pmic8058_vib_write_u8(vib, val, VIB_DRV);
@@ -106,6 +112,10 @@ static int pmic8058_vib_set(struct pmic8058_vib *vib, int on)
 		if (rc < 0)
 			return rc;
 		vib->reg_vib_drv = val;
+
+		rc = pm_runtime_suspend(vib->dev);
+		if (rc < 0)
+			dev_dbg(vib->dev, "pm_runtime_suspend failed\n");
 	}
 	__dump_vib_regs(vib, "vib_set_end");
 
@@ -118,8 +128,13 @@ static void pmic8058_vib_enable(struct timed_output_dev *dev, int value)
 					 timed_dev);
 	unsigned long flags;
 
+retry:
 	spin_lock_irqsave(&vib->lock, flags);
-	hrtimer_cancel(&vib->vib_timer);
+	if (hrtimer_try_to_cancel(&vib->vib_timer) < 0) {
+		spin_unlock_irqrestore(&vib->lock, flags);
+		cpu_relax();
+		goto retry;
+	}
 
 	if (value == 0)
 		vib->state = 0;
@@ -208,6 +223,12 @@ static int __devinit pmic8058_vib_probe(struct platform_device *pdev)
 	if (!vib)
 		return -ENOMEM;
 
+	/* Enable runtime PM ops, start in ACTIVE mode */
+	rc = pm_runtime_set_active(&pdev->dev);
+	if (rc < 0)
+		dev_dbg(&pdev->dev, "unable to set runtime pm state\n");
+	pm_runtime_enable(&pdev->dev);
+
 	vib->pm_chip	= pm_chip;
 	vib->pdata	= pdata;
 	vib->level	= pdata->level_mV / 100;
@@ -244,9 +265,12 @@ static int __devinit pmic8058_vib_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, vib);
 
+	pm_runtime_set_suspended(&pdev->dev);
 	return 0;
 
 err_read_vib:
+	pm_runtime_set_suspended(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 	kfree(vib);
 	return rc;
 }
@@ -255,6 +279,7 @@ static int __devexit pmic8058_vib_remove(struct platform_device *pdev)
 {
 	struct pmic8058_vib *vib = platform_get_drvdata(pdev);
 
+	pm_runtime_disable(&pdev->dev);
 	cancel_work_sync(&vib->work);
 	hrtimer_cancel(&vib->vib_timer);
 	timed_output_dev_unregister(&vib->timed_dev);
@@ -289,4 +314,4 @@ module_exit(pmic8058_vib_exit);
 
 MODULE_ALIAS("platform:pmic8058_vib");
 MODULE_DESCRIPTION("PMIC8058 vibrator driver");
-MODULE_LICENSE("GPLv2");
+MODULE_LICENSE("GPL v2");

@@ -33,6 +33,7 @@
 #include <linux/earlysuspend.h>
 #include <linux/list.h>
 #include <linux/android_pmem.h>
+#include <linux/slab.h>
 #include <asm/ioctls.h>
 #include <mach/msm_adsp.h>
 #include <linux/msm_audio.h>
@@ -40,6 +41,7 @@
 #include <mach/qdsp5/qdsp5audppmsg.h>
 #include <mach/qdsp5/qdsp5audplaycmdi.h>
 #include <mach/qdsp5/qdsp5audplaymsg.h>
+#include <mach/qdsp5/qdsp5rmtcmdi.h>
 #include <mach/debug_mm.h>
 
 #include "audmgr.h"
@@ -135,6 +137,7 @@ struct audio {
 	uint8_t buf_refresh:1;
 	int teos; /* valid only if tunnel mode & no data left for decoder */
 	enum msm_aud_decoder_state dec_state;	/* Represents decoder state */
+	int rmt_resource_released;
 
 	const char *module_name;
 	unsigned queue_id;
@@ -169,8 +172,40 @@ static void audqcelp_send_data(struct audio *audio, unsigned needed);
 static void audqcelp_config_hostpcm(struct audio *audio);
 static void audqcelp_buffer_refresh(struct audio *audio);
 static void audqcelp_dsp_event(void *private, unsigned id, uint16_t *msg);
+#ifdef CONFIG_HAS_EARLYSUSPEND
 static void audqcelp_post_event(struct audio *audio, int type,
 		union msm_audio_event_payload payload);
+#endif
+
+static int rmt_put_resource(struct audio *audio)
+{
+	struct aud_codec_config_cmd cmd;
+	unsigned short client_idx;
+
+	cmd.cmd_id = RM_CMD_AUD_CODEC_CFG;
+	cmd.client_id = RM_AUD_CLIENT_ID;
+	cmd.task_id = audio->dec_id;
+	cmd.enable = RMT_DISABLE;
+	cmd.dec_type = AUDDEC_DEC_QCELP;
+	client_idx = ((cmd.client_id << 8) | cmd.task_id);
+
+	return put_adsp_resource(client_idx, &cmd, sizeof(cmd));
+}
+
+static int rmt_get_resource(struct audio *audio)
+{
+	struct aud_codec_config_cmd cmd;
+	unsigned short client_idx;
+
+	cmd.cmd_id = RM_CMD_AUD_CODEC_CFG;
+	cmd.client_id = RM_AUD_CLIENT_ID;
+	cmd.task_id = audio->dec_id;
+	cmd.enable = RMT_ENABLE;
+	cmd.dec_type = AUDDEC_DEC_QCELP;
+	client_idx = ((cmd.client_id << 8) | cmd.task_id);
+
+	return get_adsp_resource(client_idx, &cmd, sizeof(cmd));
+}
 
 /* must be called with audio->lock held */
 static int audqcelp_enable(struct audio *audio)
@@ -181,6 +216,17 @@ static int audqcelp_enable(struct audio *audio)
 	MM_DBG("\n"); /* Macro prints the file name and function */
 	if (audio->enabled)
 		return 0;
+
+	if (audio->rmt_resource_released == 1) {
+		audio->rmt_resource_released = 0;
+		rc = rmt_get_resource(audio);
+		if (rc) {
+			MM_ERR("ADSP resources are not available for QCELP \
+				session 0x%08x on decoder: %d\n Ignoring \
+				error and going ahead with the playback\n",
+				(int)audio, audio->dec_id);
+		}
+	}
 
 	audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 	audio->out_tail = 0;
@@ -241,6 +287,8 @@ static int audqcelp_disable(struct audio *audio)
 		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK)
 			audmgr_disable(&audio->audmgr);
 		audio->out_needed = 0;
+		rmt_put_resource(audio);
+		audio->rmt_resource_released = 1;
 	}
 	return rc;
 }
@@ -954,8 +1002,7 @@ static long audqcelp_ioctl(struct file *file, unsigned int cmd,
 }
 
 /* Only useful in tunnel-mode */
-static int audqcelp_fsync(struct file *file, struct dentry *dentry,
-			int datasync)
+static int audqcelp_fsync(struct file *file, int datasync)
 {
 	struct audio *audio = file->private_data;
 	int rc = 0;
@@ -1210,6 +1257,8 @@ static int audqcelp_release(struct inode *inode, struct file *file)
 	MM_INFO("audio instance 0x%08x freeing\n", (int) audio);
 	mutex_lock(&audio->lock);
 	audqcelp_disable(audio);
+	if (audio->rmt_resource_released == 0)
+		rmt_put_resource(audio);
 	audqcelp_flush(audio);
 	audqcelp_flush_pcm_buf(audio);
 	msm_adsp_put(audio->audplay);
@@ -1236,6 +1285,7 @@ static int audqcelp_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+#ifdef CONFIG_HAS_EARLYSUSPEND
 static void audqcelp_post_event(struct audio *audio, int type,
 		union msm_audio_event_payload payload)
 {
@@ -1252,6 +1302,7 @@ static void audqcelp_post_event(struct audio *audio, int type,
 		e_node = kmalloc(sizeof(struct audqcelp_event), GFP_ATOMIC);
 		if (!e_node) {
 			MM_ERR("No mem to post event %d\n", type);
+			spin_unlock_irqrestore(&audio->event_queue_lock, flags);
 			return;
 		}
 	}
@@ -1264,7 +1315,6 @@ static void audqcelp_post_event(struct audio *audio, int type,
 	wake_up(&audio->event_wait);
 }
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
 static void audqcelp_suspend(struct early_suspend *h)
 {
 	struct audqcelp_suspend_ctl *ctl =
@@ -1443,6 +1493,16 @@ static int audqcelp_open(struct inode *inode, struct file *file)
 				audio->module_name, (int)audio);
 		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK)
 			audmgr_close(&audio->audmgr);
+		goto err;
+	}
+
+	rc = rmt_get_resource(audio);
+	if (rc) {
+		MM_ERR("ADSP resources are not available for QCELP session \
+			 0x%08x on decoder: %d\n", (int)audio, audio->dec_id);
+		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK)
+			audmgr_close(&audio->audmgr);
+		msm_adsp_put(audio->audplay);
 		goto err;
 	}
 

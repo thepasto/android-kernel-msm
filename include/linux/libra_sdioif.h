@@ -1,4 +1,4 @@
-/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -38,9 +38,17 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/sdio_func.h>
 
+/*
+ * Common Defines
+ */
 #define LIBRA_MAN_ID              0x70
+#define LIBRA_REV_1_0_CARD_ID     0x0
 
-typedef void (suspend_handler_t)(struct sdio_func *);
+#define VOLANS_MAN_ID             0x70
+#define VOLANS_REV_1_0_CARD_ID    0x0
+#define VOLANS_REV_2_0_CARD_ID    0x2881
+
+typedef int (suspend_handler_t)(struct sdio_func *);
 typedef void (resume_handler_t)(struct sdio_func *);
 
 int    libra_sdio_configure(sdio_irq_handler_t libra_sdio_rxhandler,
@@ -73,5 +81,13 @@ int libra_sdio_configure_suspend_resume(
 		suspend_handler_t *libra_sdio_suspend_hdlr,
 		resume_handler_t *libra_sdio_resume_hdlr);
 
+int libra_detect_card_change(void);
+
+void libra_sdio_set_clock(struct sdio_func *func, unsigned int clk_freq);
+void libra_sdio_get_card_id(struct sdio_func *func, unsigned short *card_id);
+void libra_sdio_release_irq(struct sdio_func *func);
+int libra_enable_sdio_irq(struct sdio_func *func, u8 enable);
+void libra_sdio_disable_func(struct sdio_func *func);
+int libra_disable_sdio_irq_capability(struct sdio_func *func, u8 disable);
 
 #endif /* __LIBRA_SDIOIF_H__ */

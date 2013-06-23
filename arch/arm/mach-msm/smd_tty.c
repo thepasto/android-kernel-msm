@@ -1,7 +1,7 @@
 /* arch/arm/mach-msm/smd_tty.c
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -22,18 +22,26 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/wakelock.h>
+#include <linux/platform_device.h>
 
 #include <linux/tty.h>
 #include <linux/tty_driver.h>
 #include <linux/tty_flip.h>
 
 #include <mach/msm_smd.h>
+#include <mach/peripheral-loader.h>
+#include <mach/socinfo.h>
+
 #include "smd_private.h"
 
 #define MAX_SMD_TTYS 37
 #define MAX_TTY_BUF_SIZE 2048
 
 static DEFINE_MUTEX(smd_tty_lock);
+
+static uint smd_tty_modem_wait;
+module_param_named(modem_wait, smd_tty_modem_wait,
+			uint, S_IRUGO | S_IWUSR | S_IWGRP);
 
 struct smd_tty_info {
 	smd_channel_t *ch;
@@ -42,9 +50,33 @@ struct smd_tty_info {
 	int open_count;
 	struct tasklet_struct tty_tsklt;
 	struct timer_list buf_req_timer;
+	struct completion ch_allocated;
+	struct platform_driver driver;
+	void *pil;
+	int in_reset;
+	int in_reset_updated;
+	int is_open;
+	wait_queue_head_t ch_opened_wait_queue;
+	spinlock_t reset_lock;
 };
 
+#define LOOPBACK_IDX 36
+static char *smd_ch_name[] = {
+	[0] = "DS",
+	[7] = "DATA1",
+	[21] = "DATA21",
+	[27] = "GPSNMEA",
+	[36] = "LOOPBACK",
+};
+
+
+static struct delayed_work loopback_work;
 static struct smd_tty_info smd_tty[MAX_SMD_TTYS];
+
+static int is_in_reset(struct smd_tty_info *info)
+{
+	return info->in_reset;
+}
 
 static void buf_req_retry(unsigned long param)
 {
@@ -63,6 +95,13 @@ static void smd_tty_read(unsigned long param)
 		return;
 
 	for (;;) {
+		if (is_in_reset(info)) {
+			/* signal TTY clients using TTY_BREAK */
+			tty_insert_flip_char(tty, 0x00, TTY_BREAK);
+			tty_flip_buffer_push(tty);
+			break;
+		}
+
 		if (test_bit(TTY_THROTTLED, &tty->flags)) break;
 		avail = smd_read_avail(info->ch);
 		if (avail == 0)
@@ -103,11 +142,56 @@ static void smd_tty_read(unsigned long param)
 static void smd_tty_notify(void *priv, unsigned event)
 {
 	struct smd_tty_info *info = priv;
+	unsigned long flags;
 
-	if (event != SMD_EVENT_DATA)
-		return;
+	switch (event) {
+	case SMD_EVENT_DATA:
+		/* There may be clients (tty framework) that are blocked
+		 * waiting for space to write data, so if a possible read
+		 * interrupt came in wake anyone waiting and disable the
+		 * interrupts
+		 */
+		if (smd_write_avail(info->ch)) {
+			smd_disable_read_intr(info->ch);
+			if (info->tty)
+				wake_up_interruptible(&info->tty->write_wait);
+		}
+		tasklet_hi_schedule(&info->tty_tsklt);
+		break;
 
-	tasklet_hi_schedule(&info->tty_tsklt);
+	case SMD_EVENT_OPEN:
+		spin_lock_irqsave(&info->reset_lock, flags);
+		info->in_reset = 0;
+		info->in_reset_updated = 1;
+		info->is_open = 1;
+		wake_up_interruptible(&info->ch_opened_wait_queue);
+		spin_unlock_irqrestore(&info->reset_lock, flags);
+		break;
+
+	case SMD_EVENT_CLOSE:
+		spin_lock_irqsave(&info->reset_lock, flags);
+		info->in_reset = 1;
+		info->in_reset_updated = 1;
+		info->is_open = 0;
+		wake_up_interruptible(&info->ch_opened_wait_queue);
+		spin_unlock_irqrestore(&info->reset_lock, flags);
+		/* schedule task to send TTY_BREAK */
+		tasklet_hi_schedule(&info->tty_tsklt);
+
+		if (info->tty->index == LOOPBACK_IDX)
+			schedule_delayed_work(&loopback_work,
+					msecs_to_jiffies(1000));
+		break;
+	}
+}
+
+static uint32_t is_modem_smsm_inited(void)
+{
+	uint32_t modem_state;
+	uint32_t ready_state = (SMSM_INIT | SMSM_SMDINIT);
+
+	modem_state = smsm_get_state(SMSM_MODEM_STATE);
+	return (modem_state & ready_state) == ready_state;
 }
 
 static int smd_tty_open(struct tty_struct *tty, struct file *f)
@@ -115,19 +199,9 @@ static int smd_tty_open(struct tty_struct *tty, struct file *f)
 	int res = 0;
 	int n = tty->index;
 	struct smd_tty_info *info;
-	const char *name;
 
-	if (n == 0)
-		name = "DS";
-	else if (n == 7)
-		name = "DATA1";
-	else if (n == 21)
-		name = "DATA21";
-	else if (n == 27)
-		name = "GPSNMEA";
-	else if (n == 36)
-		name = "LOOPBACK";
-	else
+
+	if (!smd_ch_name[n])
 		return -ENODEV;
 
 	info = smd_tty + n;
@@ -136,26 +210,83 @@ static int smd_tty_open(struct tty_struct *tty, struct file *f)
 	tty->driver_data = info;
 
 	if (info->open_count++ == 0) {
+		info->pil = pil_get("modem");
+		if (IS_ERR(info->pil)) {
+			res = PTR_ERR(info->pil);
+			goto out;
+		}
+
+		/* Wait for the modem SMSM to be inited for the SMD
+		 * Loopback channel to be allocated at the modem. Since
+		 * the wait need to be done atmost once, using msleep
+		 * doesn't degrade the performance.
+		 */
+		if (n == 36) {
+			if (!is_modem_smsm_inited())
+				msleep(5000);
+			smsm_change_state(SMSM_APPS_STATE,
+				0, SMSM_SMD_LOOPBACK);
+			msleep(100);
+		}
+
+
+		/*
+		 * Wait for a channel to be allocated so we know
+		 * the modem is ready enough.
+		 */
+		if (smd_tty_modem_wait) {
+			res = wait_for_completion_interruptible_timeout(
+				&info->ch_allocated,
+				msecs_to_jiffies(smd_tty_modem_wait * 1000));
+
+			if (res == 0) {
+				pr_err("Timed out waiting for SMD channel\n");
+				res = -ETIMEDOUT;
+				goto release_pil;
+			} else if (res < 0) {
+				pr_err("Error waiting for SMD channel: %d\n",
+					res);
+				goto release_pil;
+			}
+
+			res = 0;
+		}
+
+
 		info->tty = tty;
 		tasklet_init(&info->tty_tsklt, smd_tty_read,
 			     (unsigned long)info);
-		wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND, name);
+		wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND,
+				smd_ch_name[n]);
 		if (!info->ch) {
-			if (n == 36) {
-				/* set smsm state to SMSM_SMD_LOOPBACK state
-				** and wait allowing enough time for Modem side
-				** to open the loopback port (Currently, this is
-				** this is effecient than polling).
-				*/
-				smsm_change_state(SMSM_APPS_STATE,
-						  0, SMSM_SMD_LOOPBACK);
-				msleep(100);
+			res = smd_open(smd_ch_name[n], &info->ch, info,
+				       smd_tty_notify);
+			if (res < 0) {
+				pr_err("%s: %s open failed %d\n", __func__,
+					smd_ch_name[n], res);
+				goto release_pil;
 			}
 
-			res = smd_open(name, &info->ch, info,
-				       smd_tty_notify);
+			res = wait_event_interruptible_timeout(
+				info->ch_opened_wait_queue,
+				info->is_open, (2 * HZ));
+			if (res == 0)
+				res = -ETIMEDOUT;
+			if (res < 0) {
+				pr_err("%s: wait for %s smd_open failed %d\n",
+					__func__, smd_ch_name[n], res);
+				goto release_pil;
+			}
+			res = 0;
 		}
 	}
+
+release_pil:
+	if (res < 0)
+		pil_put(info->pil);
+	else
+		smd_disable_read_intr(info->ch);
+out:
 	mutex_unlock(&smd_tty_lock);
 
 	return res;
@@ -170,14 +301,17 @@ static void smd_tty_close(struct tty_struct *tty, struct file *f)
 
 	mutex_lock(&smd_tty_lock);
 	if (--info->open_count == 0) {
-		info->tty = 0;
+		if (info->tty) {
+			tasklet_kill(&info->tty_tsklt);
+			wake_lock_destroy(&info->wake_lock);
+			info->tty = 0;
+		}
 		tty->driver_data = 0;
 		del_timer(&info->buf_req_timer);
-		tasklet_kill(&info->tty_tsklt);
-		wake_lock_destroy(&info->wake_lock);
 		if (info->ch) {
 			smd_close(info->ch);
 			info->ch = 0;
+			pil_put(info->pil);
 		}
 	}
 	mutex_unlock(&smd_tty_lock);
@@ -192,7 +326,17 @@ static int smd_tty_write(struct tty_struct *tty, const unsigned char *buf, int l
 	** never be able to write more data than there
 	** is currently space for
 	*/
+	if (is_in_reset(info))
+		return -ENETRESET;
+
 	avail = smd_write_avail(info->ch);
+	/* if no space, we'll have to setup a notification later to wake up the
+	 * tty framework when space becomes avaliable
+	 */
+	if (!avail) {
+		smd_enable_read_intr(info->ch);
+		return 0;
+	}
 	if (len > avail)
 		len = avail;
 
@@ -218,11 +362,29 @@ static void smd_tty_unthrottle(struct tty_struct *tty)
 	return;
 }
 
+/*
+ * Returns the current TIOCM status bits including:
+ *      SMD Signals (DTR/DSR, CTS/RTS, CD, RI)
+ *      TIOCM_OUT1 - reset state (1=in reset)
+ *      TIOCM_OUT2 - reset state updated (1=updated)
+ */
 static int smd_tty_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct smd_tty_info *info = tty->driver_data;
+	unsigned long flags;
+	int tiocm;
 
-	return smd_tiocmget(info->ch);
+	tiocm = smd_tiocmget(info->ch);
+
+	spin_lock_irqsave(&info->reset_lock, flags);
+	tiocm |= (info->in_reset ? TIOCM_OUT1 : 0);
+	if (info->in_reset_updated) {
+		tiocm |= TIOCM_OUT2;
+		info->in_reset_updated = 0;
+	}
+	spin_unlock_irqrestore(&info->reset_lock, flags);
+
+	return tiocm;
 }
 
 static int smd_tty_tiocmset(struct tty_struct *tty, struct file *file,
@@ -230,7 +392,20 @@ static int smd_tty_tiocmset(struct tty_struct *tty, struct file *file,
 {
 	struct smd_tty_info *info = tty->driver_data;
 
+	if (info->in_reset)
+		return -ENETRESET;
+
 	return smd_tiocmset(info->ch, set, clear);
+}
+
+static void loopback_probe_worker(struct work_struct *work)
+{
+	/* wait for modem to restart before requesting loopback server */
+	if (!is_modem_smsm_inited())
+		schedule_delayed_work(&loopback_work, msecs_to_jiffies(1000));
+	else
+		smsm_change_state(SMSM_APPS_STATE,
+			  0, SMSM_SMD_LOOPBACK);
 }
 
 static struct tty_operations smd_tty_ops = {
@@ -244,11 +419,28 @@ static struct tty_operations smd_tty_ops = {
 	.tiocmset = smd_tty_tiocmset,
 };
 
+static int smd_tty_dummy_probe(struct platform_device *pdev)
+{
+	if (!strcmp(pdev->name, smd_ch_name[0]))
+		complete_all(&smd_tty[0].ch_allocated);
+	else if (!strcmp(pdev->name, smd_ch_name[7]))
+		complete_all(&smd_tty[7].ch_allocated);
+	else if (!strcmp(pdev->name, smd_ch_name[21]))
+		complete_all(&smd_tty[21].ch_allocated);
+	else if (!strcmp(pdev->name, smd_ch_name[27]))
+		complete_all(&smd_tty[27].ch_allocated);
+	else if (!strcmp(pdev->name, "LOOPBACK_TTY"))
+		complete_all(&smd_tty[36].ch_allocated);
+
+	return 0;
+}
+
 static struct tty_driver *smd_tty_driver;
 
 static int __init smd_tty_init(void)
 {
 	int ret;
+	int ds_registered = 0;
 
 	smd_tty_driver = alloc_tty_driver(MAX_SMD_TTYS);
 	if (smd_tty_driver == 0)
@@ -280,7 +472,90 @@ static int __init smd_tty_init(void)
 	tty_register_device(smd_tty_driver, 27, 0);
 	tty_register_device(smd_tty_driver, 36, 0);
 
+	init_completion(&smd_tty[0].ch_allocated);
+	init_completion(&smd_tty[7].ch_allocated);
+	init_completion(&smd_tty[21].ch_allocated);
+	init_completion(&smd_tty[27].ch_allocated);
+	init_completion(&smd_tty[36].ch_allocated);
+
+	smd_tty[0].driver.probe = smd_tty_dummy_probe;
+	smd_tty[0].driver.driver.name = smd_ch_name[0];
+	smd_tty[0].driver.driver.owner = THIS_MODULE;
+	spin_lock_init(&smd_tty[0].reset_lock);
+	smd_tty[0].is_open = 0;
+	init_waitqueue_head(&smd_tty[0].ch_opened_wait_queue);
+	/*
+	 * DS port is opened in the kernel starting with 8660 fusion.
+	 * Only register the platform driver for targets older than that.
+	 */
+	if (cpu_is_msm7x01() || cpu_is_msm7x25() || cpu_is_msm7x27() ||
+			cpu_is_msm7x27a() ||
+			cpu_is_msm7x30() || cpu_is_qsd8x50() ||
+			cpu_is_msm8x55() ||  (cpu_is_msm8x60() &&
+			socinfo_get_platform_subtype() == 0x1)) {
+		ret = platform_driver_register(&smd_tty[0].driver);
+		if (ret)
+			goto out;
+		ds_registered = 1;
+	}
+	smd_tty[7].driver.probe = smd_tty_dummy_probe;
+	smd_tty[7].driver.driver.name = smd_ch_name[7];
+	smd_tty[7].driver.driver.owner = THIS_MODULE;
+	spin_lock_init(&smd_tty[7].reset_lock);
+	smd_tty[7].is_open = 0;
+	init_waitqueue_head(&smd_tty[7].ch_opened_wait_queue);
+	ret = platform_driver_register(&smd_tty[7].driver);
+	if (ret)
+		goto unreg0;
+	smd_tty[21].driver.probe = smd_tty_dummy_probe;
+	smd_tty[21].driver.driver.name = smd_ch_name[21];
+	smd_tty[21].driver.driver.owner = THIS_MODULE;
+	spin_lock_init(&smd_tty[21].reset_lock);
+	smd_tty[21].is_open = 0;
+	init_waitqueue_head(&smd_tty[21].ch_opened_wait_queue);
+	ret = platform_driver_register(&smd_tty[21].driver);
+	if (ret)
+		goto unreg7;
+	smd_tty[27].driver.probe = smd_tty_dummy_probe;
+	smd_tty[27].driver.driver.name = smd_ch_name[27];
+	smd_tty[27].driver.driver.owner = THIS_MODULE;
+	spin_lock_init(&smd_tty[27].reset_lock);
+	smd_tty[27].is_open = 0;
+	init_waitqueue_head(&smd_tty[27].ch_opened_wait_queue);
+	ret = platform_driver_register(&smd_tty[27].driver);
+	if (ret)
+		goto unreg21;
+	smd_tty[36].driver.probe = smd_tty_dummy_probe;
+	smd_tty[36].driver.driver.name = "LOOPBACK_TTY";
+	smd_tty[36].driver.driver.owner = THIS_MODULE;
+	spin_lock_init(&smd_tty[36].reset_lock);
+	smd_tty[36].is_open = 0;
+	init_waitqueue_head(&smd_tty[36].ch_opened_wait_queue);
+	INIT_DELAYED_WORK(&loopback_work, loopback_probe_worker);
+	ret = platform_driver_register(&smd_tty[36].driver);
+	if (ret)
+		goto unreg27;
+
 	return 0;
+
+unreg27:
+	platform_driver_unregister(&smd_tty[27].driver);
+unreg21:
+	platform_driver_unregister(&smd_tty[21].driver);
+unreg7:
+	platform_driver_unregister(&smd_tty[7].driver);
+unreg0:
+	if (ds_registered)
+		platform_driver_unregister(&smd_tty[0].driver);
+out:
+	tty_unregister_device(smd_tty_driver, 0);
+	tty_unregister_device(smd_tty_driver, 7);
+	tty_unregister_device(smd_tty_driver, 21);
+	tty_unregister_device(smd_tty_driver, 27);
+	tty_unregister_device(smd_tty_driver, 36);
+	tty_unregister_driver(smd_tty_driver);
+	put_tty_driver(smd_tty_driver);
+	return ret;
 }
 
 module_init(smd_tty_init);

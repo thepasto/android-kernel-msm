@@ -110,7 +110,7 @@ config PMIC8901
 
 config MARIMBA_TSADC
 	tristate "Support for Marimba Touchscreen ADC"
-	depends on MARIMBA_CORE
+	depends on MARIMBA_CORE && ARCH_MSM7X30
 	default y if MARIMBA_CORE
 	help
 	  Say yes here if you want to include support for TSADC in the
@@ -142,12 +142,14 @@ config TWL4030_CORE
 
 config MARIMBA_CORE
 	tristate "Marimba Core"
-	depends on I2C && ARCH_MSM7X30
+	depends on I2C && (ARCH_MSM7X30 || ARCH_MSM8X60)
 	default n
 	help
 	  Enables the Marimba Core driver. The core driver provides
 	  read/write capability to registers which are part of the
 	  marimba core.
+	  This driver dynamically detects the SoC and works for both
+	  Marimba and Bahama Chip.
 
 config MARIMBA_CODEC
 	tristate "Marimba Codec"
@@ -155,6 +157,14 @@ config MARIMBA_CODEC
 	default n
 	help
 	 This driver programs Marimba Wideband Codec for input/output of
+	 audio signal.
+
+config TIMPANI_CODEC
+	tristate "Timpani Codec"
+	depends on MARIMBA_CORE
+	default n
+	help
+	 This driver programs Timpani Wideband Codec for input/output of
 	 audio signal.
 
 config TWL4030_POWER
@@ -231,6 +241,17 @@ config MFD_WM831X
 
 config MFD_WM8350
 	tristate
+
+config MFD_WM8994
+       tristate "Support Wolfson Microelectronics WM8994"
+       select MFD_CORE
+       depends on I2C
+       help
+         Support for the Wolfson Microelecronics WM8994 PMIC and audio
+         CODEC.  This driver provides common support for accessing
+         the device, additional drivers must be enabled in order to use
+         the functionality of the device.
+
 
 config MFD_WM8350_CONFIG_MODE_0
 	bool
@@ -353,6 +374,34 @@ config EZX_PCAP
 	help
 	  This enables the PCAP ASIC present on EZX Phones. This is
 	  needed for MMC, TouchScreen, Sound, USB, etc..
+
+config MFD_PM8XXX
+	tristate
+
+config MFD_PM8921_CORE
+	tristate "Qualcomm PM8921 PMIC chip"
+	depends on MSM_SSBI
+	select MFD_CORE
+	select MFD_PM8XXX
+	help
+	  If you say yes to this option, support will be included for the
+	  built-in PM8921 PMIC chip.
+
+	  This is required if your board has a PM8921 and uses its features,
+	  such as: MPPs, GPIOs, regulators, interrupts, and PWM.
+
+	  Say M here if you want to include support for PM8921 chip as a module.
+	  This will build a module called "pm8921-core".
+
+config MFD_PM8XXX_IRQ
+	bool "Support for Qualcomm PM8xxx IRQ features"
+	depends on MFD_PM8XXX
+	default y if MFD_PM8XXX
+	help
+	  This is the IRQ driver for Qualcomm PM 8xxx PMIC chips.
+
+	  This is required to use certain other PM 8xxx features, such as GPIO
+	  and MPP.
 
 endmenu
 

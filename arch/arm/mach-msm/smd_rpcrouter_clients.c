@@ -1,4 +1,4 @@
-/* Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,6 +20,7 @@
  * SMD RPCROUTER CLIENTS module.
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
 #include <linux/delay.h>
@@ -46,6 +47,7 @@ static int rpc_clients_cb_thread(void *data)
 	struct msm_rpc_client_cb_item *cb_item;
 	struct msm_rpc_client *client;
 	struct rpc_request_hdr req;
+	int ret;
 
 	client = data;
 	for (;;) {
@@ -64,7 +66,9 @@ static int rpc_clients_cb_thread(void *data)
 			mutex_unlock(&client->cb_item_list_lock);
 			xdr_init_input(&client->cb_xdr, cb_item->buf,
 				       cb_item->size);
-			xdr_recv_req(&client->cb_xdr, &req);
+			ret = xdr_recv_req(&client->cb_xdr, &req);
+			if (ret)
+				goto bad_rpc;
 
 			if (req.type != 0)
 				goto bad_rpc;
@@ -101,11 +105,18 @@ static int rpc_clients_thread(void *data)
 	client = data;
 	for (;;) {
 		buffer = NULL;
-		rc = msm_rpc_read(client->ept, &buffer, -1, HZ);
+		rc = msm_rpc_read(client->ept, &buffer, -1, -1);
 
 		if (client->exit_flag) {
 			kfree(buffer);
 			break;
+		}
+
+		if (rc < 0) {
+			/* wakeup any pending requests */
+			wake_up(&client->reply_wait);
+			kfree(buffer);
+			continue;
 		}
 
 		if (rc < ((int)(sizeof(uint32_t) * 2))) {
@@ -188,6 +199,9 @@ static struct msm_rpc_client *msm_rpc_create_client(void)
 	client->cb_buf = NULL;
 	client->cb_size = 0;
 	client->exit_flag = 0;
+	client->cb_restart_teardown = NULL;
+	client->cb_restart_setup = NULL;
+	client->in_reset = 0;
 
 	init_completion(&client->complete);
 	init_completion(&client->cb_complete);
@@ -196,7 +210,7 @@ static struct msm_rpc_client *msm_rpc_create_client(void)
 	client->cb_avail = 0;
 	init_waitqueue_head(&client->cb_wait);
 	INIT_LIST_HEAD(&client->cb_list);
-	mutex_init(&client->cb_list_lock);
+	spin_lock_init(&client->cb_list_lock);
 	atomic_set(&client->next_cb_id, 1);
 
 	return client;
@@ -213,15 +227,60 @@ static void msm_rpc_destroy_client(struct msm_rpc_client *client)
 void msm_rpc_remove_all_cb_func(struct msm_rpc_client *client)
 {
 	struct msm_rpc_cb_table_item *cb_item, *tmp_cb_item;
+	unsigned long flags;
 
-	mutex_lock(&client->cb_list_lock);
+	spin_lock_irqsave(&client->cb_list_lock, flags);
 	list_for_each_entry_safe(cb_item, tmp_cb_item,
 				 &client->cb_list, list) {
 		list_del(&cb_item->list);
 		kfree(cb_item);
 	}
-	mutex_unlock(&client->cb_list_lock);
+	spin_unlock_irqrestore(&client->cb_list_lock, flags);
 }
+
+static void cb_restart_teardown(void *client_data)
+{
+	struct msm_rpc_client *client;
+
+	client = (struct msm_rpc_client *)client_data;
+	if (client) {
+		client->in_reset = 1;
+		msm_rpc_remove_all_cb_func(client);
+		client->xdr.out_index = 0;
+
+		if (client->cb_restart_teardown)
+			client->cb_restart_teardown(client);
+	}
+}
+
+static void cb_restart_setup(void *client_data)
+{
+	struct msm_rpc_client *client;
+
+	client = (struct msm_rpc_client *)client_data;
+
+	if (client) {
+		client->in_reset = 0;
+		if (client->cb_restart_setup)
+			client->cb_restart_setup(client);
+	}
+}
+
+/* Returns the reset state of the client.
+ *
+ * Return Value:
+ *	0 if client isn't in reset, >0 otherwise.
+ */
+int msm_rpc_client_in_reset(struct msm_rpc_client *client)
+{
+	int ret = 1;
+
+	if (client)
+		ret = client->in_reset;
+
+	return ret;
+}
+EXPORT_SYMBOL(msm_rpc_client_in_reset);
 
 /*
  * Interface to be used to register the client.
@@ -264,6 +323,10 @@ struct msm_rpc_client *msm_rpc_register_client(
 		return (struct msm_rpc_client *)ept;
 	}
 
+	ept->client_data = client;
+	ept->cb_restart_teardown = cb_restart_teardown;
+	ept->cb_restart_setup = cb_restart_setup;
+
 	client->prog = prog;
 	client->ver = ver;
 	client->ept = client->xdr.ept = client->cb_xdr.ept = ept;
@@ -291,6 +354,7 @@ struct msm_rpc_client *msm_rpc_register_client(
 	if (IS_ERR(client->cb_thread)) {
 		rc = PTR_ERR(client->cb_thread);
 		client->exit_flag = 1;
+		msm_rpc_read_wakeup(client->ept);
 		wait_for_completion(&client->complete);
 		msm_rpc_close(client->ept);
 		msm_rpc_destroy_client(client);
@@ -349,6 +413,10 @@ struct msm_rpc_client *msm_rpc_register_client2(
 	client->cb_func2 = cb_func;
 	client->version = 2;
 
+	ept->client_data = client;
+	ept->cb_restart_teardown = cb_restart_teardown;
+	ept->cb_restart_setup = cb_restart_setup;
+
 	/* start the read thread */
 	client->read_thread = kthread_run(rpc_clients_thread, client,
 					  "k%sclntd", name);
@@ -370,6 +438,7 @@ struct msm_rpc_client *msm_rpc_register_client2(
 	if (IS_ERR(client->cb_thread)) {
 		rc = PTR_ERR(client->cb_thread);
 		client->exit_flag = 1;
+		msm_rpc_read_wakeup(client->ept);
 		wait_for_completion(&client->complete);
 		msm_rpc_close(client->ept);
 		msm_rpc_destroy_client(client);
@@ -379,6 +448,37 @@ struct msm_rpc_client *msm_rpc_register_client2(
 	return client;
 }
 EXPORT_SYMBOL(msm_rpc_register_client2);
+
+/*
+ * Register callbacks for modem state changes.
+ *
+ * Teardown is called when the modem is going into reset.
+ * Setup is called after the modem has come out of reset (but may not
+ * be available, yet).
+ *
+ * client: pointer to client data structure.
+ *
+ * Return Value:
+ *        0 (success)
+ *        1 (client pointer invalid)
+ */
+int msm_rpc_register_reset_callbacks(
+	struct msm_rpc_client *client,
+	void (*teardown)(struct msm_rpc_client *client),
+	void (*setup)(struct msm_rpc_client *client)
+	)
+{
+	int rc = 1;
+
+	if (client) {
+		client->cb_restart_teardown = teardown;
+		client->cb_restart_setup = setup;
+		rc = 0;
+	}
+
+	return rc;
+}
+EXPORT_SYMBOL(msm_rpc_register_reset_callbacks);
 
 /*
  * Interface to be used to unregister the client
@@ -400,6 +500,7 @@ int msm_rpc_unregister_client(struct msm_rpc_client *client)
 		wait_for_completion(&client->cb_complete);
 	}
 
+	msm_rpc_read_wakeup(client->ept);
 	wait_for_completion(&client->complete);
 
 	msm_rpc_close(client->ept);
@@ -480,7 +581,14 @@ int msm_rpc_client_req(struct msm_rpc_client *client, uint32_t proc,
 
 	do {
 		rc = wait_event_timeout(client->reply_wait,
-					xdr_read_avail(&client->xdr), timeout);
+			xdr_read_avail(&client->xdr) || client->in_reset,
+			timeout);
+
+		if (client->in_reset) {
+			rc = -ENETRESET;
+			goto release_locks;
+		}
+
 		if (rc == 0) {
 			pr_err("%s: request timeout\n", __func__);
 			rc = -ETIMEDOUT;
@@ -566,6 +674,11 @@ int msm_rpc_client_req2(struct msm_rpc_client *client, uint32_t proc,
 
 	mutex_lock(&client->req_lock);
 
+	if (client->in_reset) {
+		rc = -ENETRESET;
+		goto release_locks;
+	}
+
 	xdr_start_request(&client->xdr, client->prog, client->ver, proc);
 	req_xid = be32_to_cpu(*(uint32_t *)client->xdr.out_buf);
 	if (arg_func) {
@@ -588,7 +701,14 @@ int msm_rpc_client_req2(struct msm_rpc_client *client, uint32_t proc,
 
 	do {
 		rc = wait_event_timeout(client->reply_wait,
-					xdr_read_avail(&client->xdr), timeout);
+			xdr_read_avail(&client->xdr) || client->in_reset,
+			timeout);
+
+		if (client->in_reset) {
+			rc = -ENETRESET;
+			goto release_locks;
+		}
+
 		if (rc == 0) {
 			pr_err("%s: request timeout\n", __func__);
 			rc = -ETIMEDOUT;
@@ -715,18 +835,19 @@ EXPORT_SYMBOL(msm_rpc_send_accepted_reply);
 int msm_rpc_add_cb_func(struct msm_rpc_client *client, void *cb_func)
 {
 	struct msm_rpc_cb_table_item *cb_item;
+	unsigned long flags;
 
 	if (cb_func == NULL)
 		return MSM_RPC_CLIENT_NULL_CB_ID;
 
-	mutex_lock(&client->cb_list_lock);
+	spin_lock_irqsave(&client->cb_list_lock, flags);
 	list_for_each_entry(cb_item, &client->cb_list, list) {
 		if (cb_item->cb_func == cb_func) {
-			mutex_unlock(&client->cb_list_lock);
+			spin_unlock_irqrestore(&client->cb_list_lock, flags);
 			return cb_item->cb_id;
 		}
 	}
-	mutex_unlock(&client->cb_list_lock);
+	spin_unlock_irqrestore(&client->cb_list_lock, flags);
 
 	cb_item = kmalloc(sizeof(struct msm_rpc_cb_table_item), GFP_KERNEL);
 	if (!cb_item)
@@ -736,9 +857,9 @@ int msm_rpc_add_cb_func(struct msm_rpc_client *client, void *cb_func)
 	cb_item->cb_id = atomic_add_return(1, &client->next_cb_id);
 	cb_item->cb_func = cb_func;
 
-	mutex_lock(&client->cb_list_lock);
+	spin_lock_irqsave(&client->cb_list_lock, flags);
 	list_add_tail(&cb_item->list, &client->cb_list);
-	mutex_unlock(&client->cb_list_lock);
+	spin_unlock_irqrestore(&client->cb_list_lock, flags);
 
 	return cb_item->cb_id;
 }
@@ -759,15 +880,16 @@ EXPORT_SYMBOL(msm_rpc_add_cb_func);
 void *msm_rpc_get_cb_func(struct msm_rpc_client *client, uint32_t cb_id)
 {
 	struct msm_rpc_cb_table_item *cb_item;
+	unsigned long flags;
 
-	mutex_lock(&client->cb_list_lock);
+	spin_lock_irqsave(&client->cb_list_lock, flags);
 	list_for_each_entry(cb_item, &client->cb_list, list) {
 		if (cb_item->cb_id == cb_id) {
-			mutex_unlock(&client->cb_list_lock);
+			spin_unlock_irqrestore(&client->cb_list_lock, flags);
 			return cb_item->cb_func;
 		}
 	}
-	mutex_unlock(&client->cb_list_lock);
+	spin_unlock_irqrestore(&client->cb_list_lock, flags);
 	return NULL;
 }
 EXPORT_SYMBOL(msm_rpc_get_cb_func);
@@ -783,20 +905,21 @@ EXPORT_SYMBOL(msm_rpc_get_cb_func);
 void msm_rpc_remove_cb_func(struct msm_rpc_client *client, void *cb_func)
 {
 	struct msm_rpc_cb_table_item *cb_item, *tmp_cb_item;
+	unsigned long flags;
 
 	if (cb_func == NULL)
 		return;
 
-	mutex_lock(&client->cb_list_lock);
+	spin_lock_irqsave(&client->cb_list_lock, flags);
 	list_for_each_entry_safe(cb_item, tmp_cb_item,
 				 &client->cb_list, list) {
 		if (cb_item->cb_func == cb_func) {
 			list_del(&cb_item->list);
 			kfree(cb_item);
-			mutex_unlock(&client->cb_list_lock);
+			spin_unlock_irqrestore(&client->cb_list_lock, flags);
 			return;
 		}
 	}
-	mutex_unlock(&client->cb_list_lock);
+	spin_unlock_irqrestore(&client->cb_list_lock, flags);
 }
 EXPORT_SYMBOL(msm_rpc_remove_cb_func);

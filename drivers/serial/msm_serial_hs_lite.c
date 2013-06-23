@@ -2,7 +2,7 @@
  * drivers/serial/msm_serial.c - driver for msm7k serial device and console
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -37,44 +37,32 @@
 #include <linux/nmi.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
-
+#include <linux/pm_runtime.h>
+#include <linux/gpio.h>
+#include <linux/debugfs.h>
 #include <mach/board.h>
+#include <mach/msm_serial_hs_lite.h>
+#include <mach/msm_watchdog.h>
 #include <asm/mach-types.h>
 #include "msm_serial_hs_hwreg.h"
-
-#define GSBI_CONTROL_ADDR              0x0
-#define GSBI_PROTOCOL_CODE_MASK        0x30
-#define GSBI_PROTOCOL_UART             0x40
-#define GSBI_PROTOCOL_IDLE             0x0
-
-#ifdef CONFIG_SERIAL_MSM_CLOCK_CONTROL
-enum msm_hsl_clk_states_e {
-	MSM_HSL_CLK_PORT_OFF,     /* uart port not in use */
-	MSM_HSL_CLK_OFF,          /* clock enabled */
-	MSM_HSL_CLK_REQUEST_OFF,  /* disable after TX flushed */
-	MSM_HSL_CLK_ON,           /* clock disabled */
-};
-#endif
 
 struct msm_hsl_port {
 	struct uart_port	uart;
 	char			name[16];
 	struct clk		*clk;
+	struct clk		*pclk;
+	struct dentry		*loopback_dir;
 	unsigned int		imr;
 	unsigned int		*uart_csr_code;
 	unsigned int            *gsbi_mapbase;
 	unsigned int            *mapped_gsbi;
 	unsigned int            old_snap_state;
-#ifdef CONFIG_SERIAL_MSM_CLOCK_CONTROL
-	enum msm_hsl_clk_states_e	clk_state;
-	struct hrtimer		clk_off_timer;
-	ktime_t			clk_off_delay;
-#endif
 };
 
 #define UART_TO_MSM(uart_port)	((struct msm_hsl_port *) uart_port)
 #define is_console(port)	((port)->cons && \
 				(port)->cons->index == (port)->line)
+static struct dentry *debug_base;
 static inline void wait_for_xmitr(struct uart_port *port, int bits);
 static inline void msm_hsl_write(struct uart_port *port,
 				 unsigned int val, unsigned int off)
@@ -89,60 +77,162 @@ static inline unsigned int msm_hsl_read(struct uart_port *port,
 
 static unsigned int msm_serial_hsl_has_gsbi(void)
 {
-#ifdef CONFIG_ARCH_MSM8X60
+#if defined(CONFIG_ARCH_MSM8X60) || defined(CONFIG_ARCH_MSM8960)
 	return 1;
 #else
 	return 0;
 #endif
 }
 
+static int clk_en(struct uart_port *port, int enable)
+{
+	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
+	int ret = 0;
+
+	if (enable) {
+		ret = clk_enable(msm_hsl_port->clk);
+		if (ret)
+			goto err;
+		if (msm_hsl_port->pclk) {
+			ret = clk_enable(msm_hsl_port->pclk);
+			if (ret) {
+				clk_disable(msm_hsl_port->clk);
+				goto err;
+			}
+		}
+	} else {
+		clk_disable(msm_hsl_port->clk);
+		if (msm_hsl_port->pclk)
+			clk_disable(msm_hsl_port->pclk);
+	}
+err:
+	return ret;
+}
+static int msm_hsl_loopback_enable_set(void *data, u64 val)
+{
+	struct msm_hsl_port *msm_hsl_port = data;
+	struct uart_port *port = &(msm_hsl_port->uart);
+	unsigned long flags;
+	int ret = 0;
+
+	ret = clk_set_rate(msm_hsl_port->clk, 7372800);
+	if (!ret)
+		clk_en(port, 1);
+	else {
+		pr_err("%s(): Error: Setting the clock rate\n", __func__);
+		return -EINVAL;
+	}
+
+	if (val) {
+		spin_lock_irqsave(&port->lock, flags);
+		ret = msm_hsl_read(port, UARTDM_MR2_ADDR);
+		ret |= UARTDM_MR2_LOOP_MODE_BMSK;
+		msm_hsl_write(port, ret, UARTDM_MR2_ADDR);
+		spin_unlock_irqrestore(&port->lock, flags);
+	} else {
+		spin_lock_irqsave(&port->lock, flags);
+		ret = msm_hsl_read(port, UARTDM_MR2_ADDR);
+		ret &= ~UARTDM_MR2_LOOP_MODE_BMSK;
+		msm_hsl_write(port, ret, UARTDM_MR2_ADDR);
+		spin_unlock_irqrestore(&port->lock, flags);
+	}
+
+	clk_en(port, 0);
+	return 0;
+}
+static int msm_hsl_loopback_enable_get(void *data, u64 *val)
+{
+	struct msm_hsl_port *msm_hsl_port = data;
+	struct uart_port *port = &(msm_hsl_port->uart);
+	unsigned long flags;
+	int ret = 0;
+
+	ret = clk_set_rate(msm_hsl_port->clk, 7372800);
+	if (!ret)
+		clk_en(port, 1);
+	else {
+		pr_err("%s(): Error setting clk rate\n", __func__);
+		return -EINVAL;
+	}
+
+	spin_lock_irqsave(&port->lock, flags);
+	ret = msm_hsl_read(port, UARTDM_MR2_ADDR);
+	spin_unlock_irqrestore(&port->lock, flags);
+	clk_en(port, 0);
+
+	*val = (ret & UARTDM_MR2_LOOP_MODE_BMSK) ? 1 : 0;
+	return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(loopback_enable_fops, msm_hsl_loopback_enable_get,
+	msm_hsl_loopback_enable_set, "%llu\n");
+/*
+ * msm_serial_hsl debugfs node: <debugfs_root>/msm_serial_hsl/loopback.<id>
+ * writing 1 turns on internal loopback mode in HW. Useful for automation
+ * test scripts.
+ * writing 0 disables the internal loopback mode. Default is disabled.
+ */
+static void msm_hsl_debugfs_init(struct msm_hsl_port *msm_uport, int id)
+{
+	char node_name[15];
+
+	snprintf(node_name, sizeof(node_name), "loopback.%d", id);
+	msm_uport->loopback_dir = debugfs_create_file(node_name,
+					S_IRUGO | S_IWUSR,
+					debug_base,
+					msm_uport,
+					&loopback_enable_fops);
+
+	if (IS_ERR_OR_NULL(msm_uport->loopback_dir))
+		pr_err("%s(): Cannot create loopback.%d debug entry",
+							__func__, id);
+}
 static void msm_hsl_stop_tx(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	msm_hsl_port->imr &= ~UARTDM_ISR_TXLEV_BMSK;
 	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 }
 
 static void msm_hsl_start_tx(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	msm_hsl_port->imr |= UARTDM_ISR_TXLEV_BMSK;
 	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 }
 
 static void msm_hsl_stop_rx(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	msm_hsl_port->imr &= ~(UARTDM_ISR_RXLEV_BMSK |
 			       UARTDM_ISR_RXSTALE_BMSK);
 	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 }
 
 static void msm_hsl_enable_ms(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	msm_hsl_port->imr |= UARTDM_ISR_DELTA_CTS_BMSK;
 	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 }
 
 static void handle_rx(struct uart_port *port, unsigned int misr)
@@ -301,7 +391,7 @@ static irqreturn_t msm_hsl_irq(int irq, void *dev_id)
 	unsigned long flags;
 
 	spin_lock_irqsave(&port->lock, flags);
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 	misr = msm_hsl_read(port, UARTDM_MISR_ADDR);
 	msm_hsl_write(port, 0, UARTDM_IMR_ADDR); /* disable interrupt */
 
@@ -320,7 +410,7 @@ static irqreturn_t msm_hsl_irq(int irq, void *dev_id)
 
 	/* restore interrupt */
 	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	return IRQ_HANDLED;
@@ -329,12 +419,11 @@ static irqreturn_t msm_hsl_irq(int irq, void *dev_id)
 static unsigned int msm_hsl_tx_empty(struct uart_port *port)
 {
 	unsigned int ret;
-	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 	ret = (msm_hsl_read(port, UARTDM_SR_ADDR) &
 	       UARTDM_SR_TXEMT_BMSK) ? TIOCSER_TEMT : 0;
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 
 	return ret;
 }
@@ -359,9 +448,8 @@ static void msm_hsl_set_mctrl(struct uart_port *port, unsigned int mctrl)
 {
 	unsigned int mr;
 	unsigned int loop_mode;
-	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	mr = msm_hsl_read(port, UARTDM_MR1_ADDR);
 
@@ -388,30 +476,27 @@ static void msm_hsl_set_mctrl(struct uart_port *port, unsigned int mctrl)
 			      | UARTDM_CR_TX_EN_BMSK, UARTDM_CR_ADDR);
 	}
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 }
 
 static void msm_hsl_break_ctl(struct uart_port *port, int break_ctl)
 {
-	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
-
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	if (break_ctl)
 		msm_hsl_write(port, START_BREAK, UARTDM_CR_ADDR);
 	else
 		msm_hsl_write(port, STOP_BREAK, UARTDM_CR_ADDR);
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 }
 
 static void msm_hsl_set_baud_rate(struct uart_port *port, unsigned int baud)
 {
 	unsigned int baud_code, rxstale, watermark;
+	unsigned int data;
+	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
-	/* Since requested clock rate is 4 times the clock
-	   rate assumed for CSR calculation, the CSR should
-	   programmed with 1/4th the requested baud rate */
 	switch (baud) {
 	case 300:
 		baud_code = UARTDM_CSR_75;
@@ -458,7 +543,18 @@ static void msm_hsl_set_baud_rate(struct uart_port *port, unsigned int baud)
 		rxstale = 16;
 		break;
 	case 115200:
-	default:
+		baud_code = UARTDM_CSR_28800;
+		rxstale = 31;
+		break;
+	case 230400:
+		baud_code = UARTDM_CSR_57600;
+		rxstale = 31;
+		break;
+	case 460800:
+		baud_code = UARTDM_CSR_115200;
+		rxstale = 31;
+		break;
+	default: /* 115200 baud rate */
 		baud_code = UARTDM_CSR_28800;
 		rxstale = 31;
 		break;
@@ -471,43 +567,51 @@ static void msm_hsl_set_baud_rate(struct uart_port *port, unsigned int baud)
 	watermark |= UARTDM_IPR_STALE_TIMEOUT_MSB_BMSK & (rxstale << 2);
 	msm_hsl_write(port, watermark, UARTDM_IPR_ADDR);
 
-	/* set RX watermark */
-	watermark = (port->fifosize * 3) / 4;
+	/* set RX watermark
+	 * Configure Rx Watermark as 3/4 size of Rx FIFO.
+	 * RFWR register takes value in Words for UARTDM Core
+	 * whereas it is consider to be in Bytes for UART Core.
+	 * Hence configuring Rx Watermark as 12 Words.
+	 */
+	watermark = (port->fifosize * 3) / (4 * 4);
 	msm_hsl_write(port, watermark, UARTDM_RFWR_ADDR);
 
 	/* set TX watermark */
 	msm_hsl_write(port, 0, UARTDM_TFWR_ADDR);
+
+	msm_hsl_write(port, CR_PROTECTION_EN, UARTDM_CR_ADDR);
+	msm_hsl_reset(port);
+
+	data = UARTDM_CR_TX_EN_BMSK;
+	data |= UARTDM_CR_RX_EN_BMSK;
+	/* enable TX & RX */
+	msm_hsl_write(port, data, UARTDM_CR_ADDR);
+
+	msm_hsl_write(port, RESET_STALE_INT, UARTDM_CR_ADDR);
+	/* turn on RX and CTS interrupts */
+	msm_hsl_port->imr = UARTDM_ISR_RXSTALE_BMSK
+		| UARTDM_ISR_DELTA_CTS_BMSK | UARTDM_ISR_RXLEV_BMSK;
+	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
+	msm_hsl_write(port, 6500, UARTDM_DMRX_ADDR);
+	msm_hsl_write(port, STALE_EVENT_ENABLE, UARTDM_CR_ADDR);
 }
 
 static void msm_hsl_init_clock(struct uart_port *port)
 {
-	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
-
-	clk_enable(msm_hsl_port->clk);
-
-#ifdef CONFIG_SERIAL_MSM_CLOCK_CONTROL
-	msm_hsl_port->clk_state = MSM_HSL_CLK_ON;
-#endif
-
+	clk_en(port, 1);
 }
 
 static void msm_hsl_deinit_clock(struct uart_port *port)
 {
-	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
-
-#ifdef CONFIG_SERIAL_MSM_CLOCK_CONTROL
-	if (msm_hsl_port->clk_state != MSM_HSL_CLK_OFF)
-		clk_disable(msm_hsl_port->clk);
-	msm_hsl_port->clk_state = MSM_HSL_CLK_PORT_OFF;
-#else
-	clk_disable(msm_hsl_port->clk);
-#endif
-
+	clk_en(port, 0);
 }
 
 static int msm_hsl_startup(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
+	struct platform_device *pdev = to_platform_device(port->dev);
+	const struct msm_serial_hslite_platform_data *pdata =
+					pdev->dev.platform_data;
 	unsigned int data, rfr_level;
 	int ret;
 	unsigned long flags;
@@ -515,7 +619,38 @@ static int msm_hsl_startup(struct uart_port *port)
 	snprintf(msm_hsl_port->name, sizeof(msm_hsl_port->name),
 		 "msm_serial_hsl%d", port->line);
 
+	if (!(is_console(port)) || (!port->cons) ||
+		(port->cons && (!(port->cons->flags & CON_ENABLED)))) {
+		if (msm_serial_hsl_has_gsbi())
+			if ((ioread32(msm_hsl_port->mapped_gsbi +
+				GSBI_CONTROL_ADDR) & GSBI_PROTOCOL_I2C_UART)
+					!= GSBI_PROTOCOL_I2C_UART)
+				iowrite32(GSBI_PROTOCOL_I2C_UART,
+					msm_hsl_port->mapped_gsbi +
+						GSBI_CONTROL_ADDR);
+
+		if (pdata && pdata->config_gpio) {
+			ret = gpio_request(pdata->uart_tx_gpio,
+							"UART_TX_GPIO");
+			if (unlikely(ret)) {
+				pr_err("%s: gpio request failed for:%d\n",
+						 __func__, pdata->uart_tx_gpio);
+				return ret;
+			}
+
+			ret = gpio_request(pdata->uart_rx_gpio, "UART_RX_GPIO");
+			if (unlikely(ret)) {
+				pr_err("%s: gpio request failed for:%d\n",
+						__func__, pdata->uart_rx_gpio);
+				gpio_free(pdata->uart_tx_gpio);
+				return ret;
+			}
+		}
+	}
+#ifndef CONFIG_PM_RUNTIME
 	msm_hsl_init_clock(port);
+#endif
+	pm_runtime_get_sync(port->dev);
 
 	if (likely(port->fifosize > 12))
 		rfr_level = port->fifosize - 12;
@@ -531,29 +666,6 @@ static int msm_hsl_startup(struct uart_port *port)
 	data |= UARTDM_MR1_AUTO_RFR_LEVEL1_BMSK & (rfr_level << 2);
 	data |= UARTDM_MR1_AUTO_RFR_LEVEL0_BMSK & rfr_level;
 	msm_hsl_write(port, data, UARTDM_MR1_ADDR);
-
-
-	/* Make sure IPR is not 0 to start with*/
-	msm_hsl_write(port, UARTDM_IPR_STALE_LSB_BMSK, UARTDM_IPR_ADDR);
-	data = 0;
-
-	if ((!port->cons) ||
-	    (port->cons && (!(port->cons->flags & CON_ENABLED)))) {
-		msm_hsl_write(port, CR_PROTECTION_EN, UARTDM_CR_ADDR);
-		msm_hsl_write(port, UARTDM_MR2_BITS_PER_CHAR_8 | STOP_BIT_ONE,
-			      UARTDM_MR2_ADDR);	/* 8N1 */
-		msm_hsl_reset(port);
-		data = UARTDM_CR_TX_EN_BMSK;
-	}
-
-	data |= UARTDM_CR_RX_EN_BMSK;
-
-	msm_hsl_write(port, data, UARTDM_CR_ADDR);	/* enable TX & RX */
-
-	/* turn on RX and CTS interrupts */
-	msm_hsl_port->imr = UARTDM_ISR_RXSTALE_BMSK
-		| UARTDM_ISR_DELTA_CTS_BMSK | UARTDM_ISR_RXLEV_BMSK;
-
 	spin_unlock_irqrestore(&port->lock, flags);
 
 	ret = request_irq(port->irq, msm_hsl_irq, IRQF_TRIGGER_HIGH,
@@ -562,32 +674,36 @@ static int msm_hsl_startup(struct uart_port *port)
 		printk(KERN_ERR "%s: failed to request_irq\n", __func__);
 		return ret;
 	}
-
-	spin_lock_irqsave(&port->lock, flags);
-	msm_hsl_write(port, RESET_STALE_INT, UARTDM_CR_ADDR);
-	msm_hsl_write(port, 6500, UARTDM_DMRX_ADDR);
-	msm_hsl_write(port, STALE_EVENT_ENABLE, UARTDM_CR_ADDR);
-	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
-	spin_unlock_irqrestore(&port->lock, flags);
-
 	return 0;
 }
 
 static void msm_hsl_shutdown(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
+	struct platform_device *pdev = to_platform_device(port->dev);
+	const struct msm_serial_hslite_platform_data *pdata =
+					pdev->dev.platform_data;
 
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	msm_hsl_port->imr = 0;
 	msm_hsl_write(port, 0, UARTDM_IMR_ADDR); /* disable interrupts */
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 
 	free_irq(port->irq, port);
 
+#ifndef CONFIG_PM_RUNTIME
 	msm_hsl_deinit_clock(port);
-
+#endif
+	pm_runtime_put_sync(port->dev);
+	if (!(is_console(port)) || (!port->cons) ||
+		(port->cons && (!(port->cons->flags & CON_ENABLED)))) {
+		if (pdata && pdata->config_gpio) {
+			gpio_free(pdata->uart_tx_gpio);
+			gpio_free(pdata->uart_rx_gpio);
+		}
+	}
 }
 
 static void msm_hsl_set_termios(struct uart_port *port,
@@ -596,13 +712,13 @@ static void msm_hsl_set_termios(struct uart_port *port,
 {
 	unsigned long flags;
 	unsigned int baud, mr;
-	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
 	spin_lock_irqsave(&port->lock, flags);
-	clk_enable(msm_hsl_port->clk);
+	clk_en(port, 1);
 
 	/* calculate and set baud rate */
-	baud = uart_get_baud_rate(port, termios, old, 300, 115200);
+	baud = uart_get_baud_rate(port, termios, old, 300, 460800);
+
 	msm_hsl_set_baud_rate(port, baud);
 
 	/* calculate parity */
@@ -663,7 +779,7 @@ static void msm_hsl_set_termios(struct uart_port *port,
 
 	uart_update_timeout(port, termios->c_cflag, baud);
 
-	clk_disable(msm_hsl_port->clk);
+	clk_en(port, 0);
 	spin_unlock_irqrestore(&port->lock, flags);
 }
 
@@ -698,7 +814,6 @@ static void msm_hsl_release_port(struct uart_port *port)
 							     "gsbi_resource");
 
 		size = gsbi_resource->end - gsbi_resource->start + 1;
-		release_mem_region(gsbi_resource->start, size);
 		iounmap(msm_hsl_port->mapped_gsbi);
 		msm_hsl_port->mapped_gsbi = NULL;
 	}
@@ -714,13 +829,17 @@ static int msm_hsl_request_port(struct uart_port *port)
 
 	uart_resource = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						     "uartdm_resource");
-	if (unlikely(!uart_resource))
+	if (unlikely(!uart_resource)) {
+		pr_err("%s: can't get uartdm resource\n", __func__);
 		return -ENXIO;
+	}
 	size = uart_resource->end - uart_resource->start + 1;
 
 	if (unlikely(!request_mem_region(port->mapbase, size,
-					 "msm_serial_hs")))
+					 "msm_serial_hsl"))) {
+		pr_err("%s: can't get mem region for uartdm\n", __func__);
 		return -EBUSY;
+	}
 
 	port->membase = ioremap(port->mapbase, size);
 	if (!port->membase) {
@@ -732,18 +851,15 @@ static int msm_hsl_request_port(struct uart_port *port)
 		gsbi_resource = platform_get_resource_byname(pdev,
 							     IORESOURCE_MEM,
 							     "gsbi_resource");
-		if (unlikely(!gsbi_resource))
+		if (unlikely(!gsbi_resource)) {
+			pr_err("%s: can't get gsbi resource\n", __func__);
 			return -ENXIO;
+		}
 
 		size = gsbi_resource->end - gsbi_resource->start + 1;
-		if (unlikely(!request_mem_region(gsbi_resource->start, size,
-						 "msm_serial_hs")))
-			return -EBUSY;
-
 		msm_hsl_port->mapped_gsbi = ioremap(gsbi_resource->start,
 						    size);
 		if (!msm_hsl_port->mapped_gsbi) {
-			release_mem_region(gsbi_resource->start, size);
 			return -EBUSY;
 		}
 	}
@@ -756,11 +872,14 @@ static void msm_hsl_config_port(struct uart_port *port, int flags)
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 	if (flags & UART_CONFIG_TYPE) {
 		port->type = PORT_MSM;
-		msm_hsl_request_port(port);
+		if (msm_hsl_request_port(port))
+			return;
 	}
 	if (msm_serial_hsl_has_gsbi())
-		iowrite32(GSBI_PROTOCOL_UART, msm_hsl_port->mapped_gsbi +
-			  GSBI_CONTROL_ADDR);
+		if ((ioread32(msm_hsl_port->mapped_gsbi + GSBI_CONTROL_ADDR) &
+			GSBI_PROTOCOL_I2C_UART) != GSBI_PROTOCOL_I2C_UART)
+			iowrite32(GSBI_PROTOCOL_I2C_UART,
+				msm_hsl_port->mapped_gsbi + GSBI_CONTROL_ADDR);
 }
 
 static int msm_hsl_verify_port(struct uart_port *port,
@@ -776,20 +895,28 @@ static int msm_hsl_verify_port(struct uart_port *port,
 static void msm_hsl_power(struct uart_port *port, unsigned int state,
 			  unsigned int oldstate)
 {
-#ifndef CONFIG_SERIAL_MSM_HSL_CLOCK_CONTROL
+	int ret;
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
 	switch (state) {
 	case 0:
-		clk_enable(msm_hsl_port->clk);
+		ret = clk_set_rate(msm_hsl_port->clk, 7372800);
+		if (ret)
+			pr_err("%s(): Error setting UART clock rate\n",
+							__func__);
+		clk_en(port, 1);
 		break;
 	case 3:
-		clk_disable(msm_hsl_port->clk);
+		clk_en(port, 0);
+		ret = clk_set_rate(msm_hsl_port->clk, 0);
+		if (ret)
+			pr_err("%s(): Error setting UART clock rate to zero.\n",
+							__func__);
 		break;
 	default:
-		printk(KERN_ERR "msm_serial_hsl: Unknown PM state %d\n", state);
+		pr_err("%s(): msm_serial_hsl: Unknown PM state %d\n",
+							__func__, state);
 	}
-#endif
 }
 
 static struct uart_ops msm_hsl_uart_pops = {
@@ -818,7 +945,7 @@ static struct msm_hsl_port msm_hsl_uart_ports[] = {
 			.iotype = UPIO_MEM,
 			.ops = &msm_hsl_uart_pops,
 			.flags = UPF_BOOT_AUTOCONF,
-			.fifosize = 256,
+			.fifosize = 64,
 			.line = 0,
 		},
 	},
@@ -827,7 +954,7 @@ static struct msm_hsl_port msm_hsl_uart_ports[] = {
 			.iotype = UPIO_MEM,
 			.ops = &msm_hsl_uart_pops,
 			.flags = UPF_BOOT_AUTOCONF,
-			.fifosize = 256,
+			.fifosize = 64,
 			.line = 1,
 		},
 	},
@@ -836,7 +963,7 @@ static struct msm_hsl_port msm_hsl_uart_ports[] = {
 			.iotype = UPIO_MEM,
 			.ops = &msm_hsl_uart_pops,
 			.flags = UPF_BOOT_AUTOCONF,
-			.fifosize = 256,
+			.fifosize = 64,
 			.line = 2,
 		},
 	},
@@ -852,47 +979,30 @@ static inline struct uart_port *get_port_from_line(unsigned int line)
 /*
  *  Wait for transmitter & holding register to empty
  *  Derived from wait_for_xmitr in 8250 serial driver by Russell King  */
-static inline void wait_for_xmitr(struct uart_port *port, int bits)
+void wait_for_xmitr(struct uart_port *port, int bits)
 {
-	if (!(msm_hsl_read(port, UARTDM_SR_ADDR) & UARTDM_SR_TXEMT_BMSK))
+	if (!(msm_hsl_read(port, UARTDM_SR_ADDR) & UARTDM_SR_TXEMT_BMSK)) {
 		while ((msm_hsl_read(port, UARTDM_ISR_ADDR) & bits) != bits) {
 			udelay(1);
 			touch_nmi_watchdog();
 			cpu_relax();
 		}
+		msm_hsl_write(port, CLEAR_TX_READY, UARTDM_CR_ADDR);
+	}
 }
 
 #ifdef CONFIG_SERIAL_MSM_HSL_CONSOLE
-static void msm_hsl_console_putchars(struct uart_port *port,
-				     int num, const char *s)
+static void msm_hsl_console_putchar(struct uart_port *port, int ch)
 {
-	int word_count, word;
-	int i;
-
-	word_count = (num % 4) ? (num / 4 + 1) : (num / 4);
 	wait_for_xmitr(port, UARTDM_ISR_TX_READY_BMSK);
-	msm_hsl_write(port, num, UARTDM_NCF_TX_ADDR);
+	msm_hsl_write(port, 1, UARTDM_NCF_TX_ADDR);
 
-	for (i = 0; i < num; i += 4)  {
-		word = 0;
-		switch (num - i) {
-		default:
-			word |= s[i + 3] << 24;
-			/* deliberate fall-through */
-		case 3:
-			word |= s[i + 2] << 16;
-		case 2:
-			word |= s[i + 1] << 8;
-		case 1:
-			word |= s[i];
-		}
-		while (!(msm_hsl_read(port, UARTDM_SR_ADDR) &
-			 UARTDM_SR_TXRDY_BMSK)) {
-			udelay(1);
-			touch_nmi_watchdog();
-		}
-		msm_hsl_write(port, word, UARTDM_TF_ADDR);
+	while (!(msm_hsl_read(port, UARTDM_SR_ADDR) & UARTDM_SR_TXRDY_BMSK)) {
+		udelay(1);
+		touch_nmi_watchdog();
 	}
+
+	msm_hsl_write(port, ch, UARTDM_TF_ADDR);
 }
 
 static void msm_hsl_console_write(struct console *co, const char *s,
@@ -901,8 +1011,6 @@ static void msm_hsl_console_write(struct console *co, const char *s,
 	struct uart_port *port;
 	struct msm_hsl_port *msm_hsl_port;
 	int locked;
-	int num = 0 , i;
-	const char *last_break;
 
 	BUG_ON(co->index < 0 || co->index >= UART_NR);
 
@@ -916,26 +1024,10 @@ static void msm_hsl_console_write(struct console *co, const char *s,
 		locked = 1;
 		spin_lock(&port->lock);
 	}
-
-	/* need to replace LFs by CRLFs */
-	last_break = s;
-	for (i = 0; i < count; i++, s++) {
-		if (*s == '\n')	{
-			if (num > 0)
-				msm_hsl_console_putchars(port, num, last_break);
-			last_break += num + 1;
-			num = 0;
-			msm_hsl_console_putchars(port, 2, "\r\n");
-		} else {
-			num++;
-			if (num > port->fifosize) {
-				msm_hsl_console_putchars(port, 256, last_break);
-				last_break += port->fifosize;
-			}
-		}
-	}
-	msm_hsl_console_putchars(port, num, last_break);
-
+	msm_hsl_write(port, 0, UARTDM_IMR_ADDR);
+	uart_console_write(port, s, count, msm_hsl_console_putchar);
+	msm_hsl_write(port, msm_hsl_port->imr, UARTDM_IMR_ADDR);
+	ratelimited_pet_watchdog();
 	if (locked == 1)
 		spin_unlock(&port->lock);
 }
@@ -956,7 +1048,12 @@ static int __init msm_hsl_console_setup(struct console *co, char *options)
 
 	port->cons = co;
 
+	pm_runtime_get_noresume(port->dev);
+
+#ifndef CONFIG_PM_RUNTIME
 	msm_hsl_init_clock(port);
+#endif
+	pm_runtime_resume(port->dev);
 
 	if (options)
 		uart_parse_options(options, &baud, &parity, &bits, &flow);
@@ -1009,7 +1106,7 @@ static struct uart_driver msm_hsl_uart_driver = {
 	.cons = MSM_HSL_CONSOLE,
 };
 
-static int __init msm_serial_hsl_probe(struct platform_device *pdev)
+static int __devinit msm_serial_hsl_probe(struct platform_device *pdev)
 {
 	struct msm_hsl_port *msm_hsl_port;
 	struct resource *uart_resource;
@@ -1034,26 +1131,19 @@ static int __init msm_serial_hsl_probe(struct platform_device *pdev)
 		if (unlikely(!gsbi_resource))
 			return -ENXIO;
 		msm_hsl_port->clk = clk_get(&pdev->dev, "gsbi_uart_clk");
+		msm_hsl_port->pclk = clk_get(&pdev->dev, "gsbi_pclk");
 	} else {
 		msm_hsl_port->clk = clk_get(&pdev->dev, "uartdm_clk");
+		msm_hsl_port->pclk = NULL;
 	}
 
 	if (unlikely(IS_ERR(msm_hsl_port->clk))) {
 		printk(KERN_ERR "%s: Error getting clk\n", __func__);
 		return PTR_ERR(msm_hsl_port->clk);
 	}
-
-	/* Set up the MREG/NREG/DREG/MNDREG */
-	ret = clk_set_rate(msm_hsl_port->clk, 7372800);
-	if (ret) {
-		printk(KERN_WARNING "Error setting clock rate on UART\n");
-		return ret;
-	}
-
-	ret = clk_enable(msm_hsl_port->clk);
-	if (ret) {
-		printk(KERN_ERR "Error could not turn on UART clk\n");
-		return ret;
+	if (unlikely(IS_ERR(msm_hsl_port->pclk))) {
+		printk(KERN_ERR "%s: Error getting pclk\n", __func__);
+		return PTR_ERR(msm_hsl_port->pclk);
 	}
 
 	uart_resource = platform_get_resource_byname(pdev,
@@ -1070,13 +1160,11 @@ static int __init msm_serial_hsl_probe(struct platform_device *pdev)
 		printk(KERN_ERR "%s: getting irq failed\n", __func__);
 		return -ENXIO;
 	}
+
+	device_set_wakeup_capable(&pdev->dev, 1);
 	platform_set_drvdata(pdev, port);
-
-	if (unlikely(set_irq_wake(port->irq, 1))) {
-		printk(KERN_ERR "%s: set_irq_wake failed\n", __func__);
-		/* return -ENXIO; */
-	}
-
+	pm_runtime_enable(port->dev);
+	msm_hsl_debugfs_init(msm_hsl_port, pdev->id);
 	ret = uart_add_one_port(&msm_hsl_uart_driver, port);
 
 	return ret;
@@ -1085,37 +1173,55 @@ static int __init msm_serial_hsl_probe(struct platform_device *pdev)
 static int __devexit msm_serial_hsl_remove(struct platform_device *pdev)
 {
 	struct msm_hsl_port *msm_hsl_port = platform_get_drvdata(pdev);
+	struct uart_port *port;
 
+	port = get_port_from_line(pdev->id);
+	pm_runtime_put_sync(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
+
+	device_set_wakeup_capable(&pdev->dev, 0);
+	platform_set_drvdata(pdev, NULL);
+	uart_remove_one_port(&msm_hsl_uart_driver, port);
+
+	clk_put(msm_hsl_port->pclk);
 	clk_put(msm_hsl_port->clk);
+	debugfs_remove(msm_hsl_port->loopback_dir);
 
 	return 0;
 }
 
 #ifdef CONFIG_PM
-static int msm_serial_hsl_suspend(struct platform_device *pdev,
-				  pm_message_t state)
+static int msm_serial_hsl_suspend(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct uart_port *port;
 	port = get_port_from_line(pdev->id);
 
 	if (port) {
-		uart_suspend_port(&msm_hsl_uart_driver, port);
 		if (is_console(port))
 			msm_hsl_deinit_clock(port);
+
+		uart_suspend_port(&msm_hsl_uart_driver, port);
+		if (device_may_wakeup(dev))
+			enable_irq_wake(port->irq);
 	}
 
 	return 0;
 }
 
-static int msm_serial_hsl_resume(struct platform_device *pdev)
+static int msm_serial_hsl_resume(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct uart_port *port;
 	port = get_port_from_line(pdev->id);
 
 	if (port) {
+		uart_resume_port(&msm_hsl_uart_driver, port);
+		if (device_may_wakeup(dev))
+			disable_irq_wake(port->irq);
+
 		if (is_console(port))
 			msm_hsl_init_clock(port);
-		uart_resume_port(&msm_hsl_uart_driver, port);
 	}
 
 	return 0;
@@ -1125,18 +1231,46 @@ static int msm_serial_hsl_resume(struct platform_device *pdev)
 #define msm_serial_hsl_resume NULL
 #endif
 
-static struct platform_driver msm_hsl_platform_driver = {
-	.probe = msm_serial_hsl_probe,
-	.remove = msm_serial_hsl_remove,
+static int msm_hsl_runtime_suspend(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct uart_port *port;
+	port = get_port_from_line(pdev->id);
+
+	dev_dbg(dev, "pm_runtime: suspending\n");
+	msm_hsl_deinit_clock(port);
+	return 0;
+}
+
+static int msm_hsl_runtime_resume(struct device *dev)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct uart_port *port;
+	port = get_port_from_line(pdev->id);
+
+	dev_dbg(dev, "pm_runtime: resuming\n");
+	msm_hsl_init_clock(port);
+	return 0;
+}
+
+static struct dev_pm_ops msm_hsl_dev_pm_ops = {
 	.suspend = msm_serial_hsl_suspend,
 	.resume = msm_serial_hsl_resume,
+	.runtime_suspend = msm_hsl_runtime_suspend,
+	.runtime_resume = msm_hsl_runtime_resume,
+};
+
+static struct platform_driver msm_hsl_platform_driver = {
+	.probe	= msm_serial_hsl_probe,
+	.remove = __devexit_p(msm_serial_hsl_remove),
 	.driver = {
 		.name = "msm_serial_hsl",
 		.owner = THIS_MODULE,
+		.pm = &msm_hsl_dev_pm_ops,
 	},
 };
 
-static int __init msm_serial_hsl_init(void)
+static int msm_serial_hsl_init(void)
 {
 	int ret;
 
@@ -1144,8 +1278,11 @@ static int __init msm_serial_hsl_init(void)
 	if (unlikely(ret))
 		return ret;
 
-	ret = platform_driver_probe(&msm_hsl_platform_driver,
-				    msm_serial_hsl_probe);
+	debug_base = debugfs_create_dir("msm_serial_hsl", NULL);
+	if (IS_ERR_OR_NULL(debug_base))
+		pr_err("%s():Cannot create debugfs dir\n", __func__);
+
+	ret = platform_driver_register(&msm_hsl_platform_driver);
 	if (unlikely(ret))
 		uart_unregister_driver(&msm_hsl_uart_driver);
 
@@ -1154,8 +1291,9 @@ static int __init msm_serial_hsl_init(void)
 	return ret;
 }
 
-static void __exit msm_serial_hsl_exit(void)
+static void msm_serial_hsl_exit(void)
 {
+	debugfs_remove_recursive(debug_base);
 #ifdef CONFIG_SERIAL_MSM_HSL_CONSOLE
 	unregister_console(&msm_hsl_console);
 #endif

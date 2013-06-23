@@ -1,5 +1,5 @@
 /* arch/arm/mach-msm/qdsp5/audio_mp3.c
- * 
+ *
  * mp3 audio output device
  *
  * Copyright (C) 2008 Google, Inc.
@@ -29,6 +29,7 @@
 #include <linux/earlysuspend.h>
 #include <linux/list.h>
 #include <linux/android_pmem.h>
+#include <linux/slab.h>
 #include <asm/atomic.h>
 #include <asm/ioctls.h>
 #include <mach/msm_adsp.h>
@@ -41,6 +42,7 @@
 #include <mach/qdsp5/qdsp5audppmsg.h>
 #include <mach/qdsp5/qdsp5audplaycmdi.h>
 #include <mach/qdsp5/qdsp5audplaymsg.h>
+#include <mach/qdsp5/qdsp5rmtcmdi.h>
 #include <mach/debug_mm.h>
 
 #define ADRV_STATUS_AIO_INTF 0x00000001
@@ -204,6 +206,7 @@ struct audio {
 	int stopped; /* set when stopped, cleared on flush */
 	int pcm_feedback;
 	int buf_refresh;
+	int rmt_resource_released;
 	int teos; /* valid only if tunnel mode & no data left for decoder */
 	enum msm_aud_decoder_state dec_state;	/* Represents decoder state */
 	int reserved; /* A byte is being reserved */
@@ -251,6 +254,36 @@ static void audmp3_post_event(struct audio *audio, int type,
 static unsigned long audmp3_pmem_fixup(struct audio *audio, void *addr,
 				unsigned long len, int ref_up);
 
+static int rmt_put_resource(struct audio *audio)
+{
+	struct aud_codec_config_cmd cmd;
+	unsigned short client_idx;
+
+	cmd.cmd_id = RM_CMD_AUD_CODEC_CFG;
+	cmd.client_id = RM_AUD_CLIENT_ID;
+	cmd.task_id = audio->dec_id;
+	cmd.enable = RMT_DISABLE;
+	cmd.dec_type = AUDDEC_DEC_MP3;
+	client_idx = ((cmd.client_id << 8) | cmd.task_id);
+
+	return put_adsp_resource(client_idx, &cmd, sizeof(cmd));
+}
+
+static int rmt_get_resource(struct audio *audio)
+{
+	struct aud_codec_config_cmd cmd;
+	unsigned short client_idx;
+
+	cmd.cmd_id = RM_CMD_AUD_CODEC_CFG;
+	cmd.client_id = RM_AUD_CLIENT_ID;
+	cmd.task_id = audio->dec_id;
+	cmd.enable = RMT_ENABLE;
+	cmd.dec_type = AUDDEC_DEC_MP3;
+	client_idx = ((cmd.client_id << 8) | cmd.task_id);
+
+	return get_adsp_resource(client_idx, &cmd, sizeof(cmd));
+}
+
 /* must be called with audio->lock held */
 static int audio_enable(struct audio *audio)
 {
@@ -261,6 +294,17 @@ static int audio_enable(struct audio *audio)
 
 	if (audio->enabled)
 		return 0;
+
+	if (audio->rmt_resource_released == 1) {
+		audio->rmt_resource_released = 0;
+		rc = rmt_get_resource(audio);
+		if (rc) {
+			MM_ERR("ADSP resources are not available for MP3 \
+				session 0x%08x on decoder: %d\n Ignoring \
+				error and going ahead with the playback\n",
+				(int)audio, audio->dec_id);
+		}
+	}
 
 	audio->dec_state = MSM_AUD_DECODER_STATE_NONE;
 	audio->out_tail = 0;
@@ -322,6 +366,8 @@ static int audio_disable(struct audio *audio)
 		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK)
 			audmgr_disable(&audio->audmgr);
 		audio->out_needed = 0;
+		rmt_put_resource(audio);
+		audio->rmt_resource_released = 1;
 	}
 	return rc;
 }
@@ -600,6 +646,7 @@ static int audplay_dsp_send_data_avail(struct audio *audio,
 	wmb();
 	return audplay_send_queue0(audio, &cmd, sizeof(cmd));
 }
+
 /* Caller holds irq_lock */
 static void audmp3_async_buffer_refresh(struct audio *audio)
 {
@@ -759,7 +806,7 @@ static void audplay_send_data(struct audio *audio, unsigned needed)
 		 * so that it won't be recycled until the next buffer
 		 * is requested
 		 */
-			
+
 		frame = audio->out + audio->out_tail;
 		if (frame->used) {
 		  BUG_ON(frame->used == 0xffffffff);
@@ -1604,7 +1651,7 @@ done:
 	return rc;
 }
 
-int audmp3_fsync(struct file *file, struct dentry *dentry, int datasync)
+int audmp3_fsync(struct file *file, int datasync)
 {
 	struct audio *audio = file->private_data;
 
@@ -1893,6 +1940,8 @@ static int audio_release(struct inode *inode, struct file *file)
 	MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
 	mutex_lock(&audio->lock);
 	audio_disable(audio);
+	if (audio->rmt_resource_released == 0)
+		rmt_put_resource(audio);
 	audio->drv_ops.out_flush(audio);
 	audio->drv_ops.in_flush(audio);
 	audmp3_reset_pmem_region(audio);
@@ -1940,6 +1989,7 @@ static void audmp3_post_event(struct audio *audio, int type,
 		e_node = kmalloc(sizeof(struct audmp3_event), GFP_ATOMIC);
 		if (!e_node) {
 			MM_ERR("No mem to post event %d\n", type);
+			spin_unlock_irqrestore(&audio->event_queue_lock, flags);
 			return;
 		}
 	}
@@ -2155,8 +2205,18 @@ static int audio_open(struct inode *inode, struct file *file)
 		goto err;
 	}
 
+	rc = rmt_get_resource(audio);
+	if (rc) {
+		MM_ERR("ADSP resources are not available for MP3 session \
+			 0x%08x on decoder: %d\n", (int)audio, audio->dec_id);
+		if (audio->pcm_feedback == TUNNEL_MODE_PLAYBACK)
+			audmgr_close(&audio->audmgr);
+		msm_adsp_put(audio->audplay);
+		goto err;
+	}
+
 	if (file->f_flags & O_NONBLOCK) {
-		MM_DBG("set to aio interface \n");
+		MM_DBG("set to aio interface\n");
 		audio->drv_status |= ADRV_STATUS_AIO_INTF;
 		audio->drv_ops.pcm_buf_update = audmp3_async_pcm_buf_update;
 		audio->drv_ops.buffer_refresh = audmp3_async_buffer_refresh;
@@ -2165,7 +2225,7 @@ static int audio_open(struct inode *inode, struct file *file)
 		audio->drv_ops.in_flush = audmp3_async_flush_pcm_buf;
 		audio->drv_ops.fsync = audmp3_async_fsync;
 	} else {
-		MM_DBG("set to std io interface \n");
+		MM_DBG("set to std io interface\n");
 		audio->drv_ops.pcm_buf_update = audio_update_pcm_buf_entry;
 		audio->drv_ops.buffer_refresh = audplay_buffer_refresh;
 		audio->drv_ops.send_data = audplay_send_data;

@@ -88,7 +88,7 @@ void aux_codec_adsp_codec_ctl_en(bool msm_adsp_en)
 			baddr + AUX_CODEC_CTL_OFFSET);
 		}
 	}
-
+	dsb();
 }
 
 /* Set who control aux pcm path: adsp or MSM */
@@ -111,7 +111,7 @@ void aux_codec_pcm_path_ctl_en(bool msm_adsp_en)
 			baddr + PCM_PATH_CTL_OFFSET);
 		}
 	}
-
+	dsb();
 	return;
 }
 EXPORT_SYMBOL(aux_codec_pcm_path_ctl_en);
@@ -164,12 +164,12 @@ void aux_pcm_gpios_free(void)
 	 * Feed silence frames before close to prevent buzzing sound in BT at
 	 * call end. This fix is applicable only to Marimba BT.
 	 */
-	gpio_tlmm_config(GPIO_CFG(the_aux_pcm_state.dout, 0, GPIO_OUTPUT,
-		GPIO_NO_PULL, GPIO_2MA), GPIO_ENABLE);
+	gpio_tlmm_config(GPIO_CFG(the_aux_pcm_state.dout, 0, GPIO_CFG_OUTPUT,
+		GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 	gpio_set_value(the_aux_pcm_state.dout, 0);
 	msleep(20);
-	gpio_tlmm_config(GPIO_CFG(the_aux_pcm_state.dout, 1, GPIO_OUTPUT,
-		GPIO_NO_PULL, GPIO_2MA), GPIO_ENABLE);
+	gpio_tlmm_config(GPIO_CFG(the_aux_pcm_state.dout, 1, GPIO_CFG_OUTPUT,
+		GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 
 	gpio_free(the_aux_pcm_state.dout);
 	gpio_free(the_aux_pcm_state.din);

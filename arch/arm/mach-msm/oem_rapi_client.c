@@ -20,6 +20,7 @@
  * OEM RAPI CLIENT Driver source file
  */
 
+#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/err.h>
 #include <linux/fs.h>

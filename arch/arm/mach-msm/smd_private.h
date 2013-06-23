@@ -1,7 +1,7 @@
 /* arch/arm/mach-msm/smd_private.h
  *
  * Copyright (C) 2007 Google, Inc.
- * Copyright (c) 2007-2010, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2007-2011, Code Aurora Forum. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -19,24 +19,21 @@
 #include <linux/types.h>
 #include <linux/spinlock.h>
 
-struct smem_heap_info
-{
+struct smem_heap_info {
 	unsigned initialized;
 	unsigned free_offset;
 	unsigned heap_remaining;
 	unsigned reserved;
 };
 
-struct smem_heap_entry
-{
+struct smem_heap_entry {
 	unsigned allocated;
 	unsigned offset;
 	unsigned size;
 	unsigned reserved;
 };
 
-struct smem_proc_comm
-{
+struct smem_proc_comm {
 	unsigned command;
 	unsigned status;
 	unsigned data1;
@@ -51,11 +48,11 @@ struct smem_proc_comm
 #define VERSION_MODEM_SBL 7
 #define VERSION_APPS      8
 #define VERSION_MODEM     9
+#define VERSION_DSPS      10
 
 #define SMD_HEAP_SIZE 512
 
-struct smem_shared
-{
+struct smem_shared {
 	struct smem_proc_comm proc_comm[4];
 	unsigned version[32];
 	struct smem_heap_info heap_info;
@@ -78,6 +75,11 @@ struct smsm_interrupt_info {
   uint32_t aArm_interrupts_pending;
   uint32_t aArm_wakeup_reason;
 };
+#elif !defined(CONFIG_MSM_SMD)
+static inline void *smem_alloc(unsigned id, unsigned size)
+{
+	return NULL;
+}
 #else
 #error No SMD Package Specified; aborting
 #endif
@@ -92,8 +94,8 @@ enum {
 	SMSM_Q6_DEM,
 	SMSM_POWER_MASTER_DEM,
 	SMSM_TIME_MASTER_DEM,
-	SMSM_NUM_ENTRIES,
 };
+extern uint32_t SMSM_NUM_ENTRIES;
 #else
 enum {
 	SMSM_APPS_STATE = 1,
@@ -106,8 +108,10 @@ enum {
 	SMSM_APPS,
 	SMSM_MODEM,
 	SMSM_Q6,
-	SMSM_NUM_HOSTS,
+	SMSM_WCNSS,
+	SMSM_DSPS,
 };
+extern uint32_t SMSM_NUM_HOSTS;
 
 #define SZ_DIAG_ERR_MSG 0xC8
 #define ID_DIAG_ERR_MSG SMEM_DIAG_ERR_MESSAGE
@@ -143,6 +147,8 @@ enum {
 #define SMSM_MODEM_WAIT        0x02000000
 #define SMSM_MODEM_BREAK       0x04000000
 #define SMSM_MODEM_CONTINUE    0x08000000
+#define SMSM_SYSTEM_REBOOT_USR 0x20000000
+#define SMSM_SYSTEM_PWRDWN_USR 0x40000000
 #define SMSM_UNKNOWN           0x80000000
 
 #define SMSM_WKUP_REASON_RPC	0x00000001
@@ -151,6 +157,8 @@ enum {
 #define SMSM_WKUP_REASON_TIMER	0x00000008
 #define SMSM_WKUP_REASON_ALARM	0x00000010
 #define SMSM_WKUP_REASON_RESET	0x00000020
+
+#define SMSM_VENDOR             0x00020000
 
 void *smem_alloc(unsigned id, unsigned size);
 void *smem_get_entry(unsigned id, unsigned *size);
@@ -180,6 +188,7 @@ enum {
 	SMEM_DIAG_ERR_MESSAGE,
 	SMEM_SPINLOCK_ARRAY,
 	SMEM_MEMORY_BARRIER_LOCATION,
+	SMEM_FIXED_ITEM_LAST = SMEM_MEMORY_BARRIER_LOCATION,
 
 	/* dynamic items */
 	SMEM_AARM_PARTITION_TABLE,
@@ -256,7 +265,11 @@ enum {
 	SMEM_SEFS_INFO,
 	SMEM_RESET_LOG,
 	SMEM_RESET_LOG_SYMBOLS,
-	SMEM_MEM_LAST = SMEM_RESET_LOG_SYMBOLS,
+	SMEM_MODEM_SW_BUILD_ID,
+	SMEM_SMEM_LOG_MPROC_WRAP,
+	SMEM_BOOT_INFO_FOR_APPS,
+	SMEM_SMSM_SIZE_INFO,
+	SMEM_MEM_LAST = SMEM_SMSM_SIZE_INFO,
 	SMEM_NUM_ITEMS,
 };
 
@@ -303,7 +316,7 @@ struct smd_half_channel {
 	unsigned char fHEAD;
 	unsigned char fTAIL;
 	unsigned char fSTATE;
-	unsigned char fUNUSED;
+	unsigned char fBLOCKREADINTR;
 	unsigned tail;
 	unsigned head;
 };
