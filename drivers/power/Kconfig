@@ -195,6 +195,14 @@ config BATTERY_MSM_FAKE
 	help
 	  Say Y to bypass actual battery queries.
 
+config ACER_BATTERY
+	tristate "Acer A1 battery on TI BQ27210"
+	depends on POWER_SUPPLY
+	depends on I2C
+	default n
+	help
+	 Say Y to enable support for Acer A1 battery on TI BQ27210.
+
 config PM8058_FIX_USB
 	tristate "pmic8058 software workaround for usb removal"
 	depends on PMIC8058
