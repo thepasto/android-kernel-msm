@@ -52,6 +52,9 @@ static void msm_otg_set_id_state(int id)
 
 struct msm_otg *the_msm_otg;
 
+#ifdef CONFIG_MACH_ACER_A1
+#define is_host() (0)
+#else
 static int is_host(void)
 {
 	struct msm_otg *dev = the_msm_otg;
@@ -61,6 +64,7 @@ static int is_host(void)
 	else
 		return !test_bit(ID, &dev->inputs);
 }
+#endif
 
 static int is_b_sess_vld(void)
 {
