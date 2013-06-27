@@ -32,11 +32,6 @@
 #include <linux/pm_qos_params.h>
 #include <mach/gpio.h>
 
-#if defined (CONFIG_MACH_ACER_A1)
-atomic_t during_suspend = ATOMIC_INIT(0);
-atomic_t finished = ATOMIC_INIT(1);
-#endif
-
 enum {
 	I2C_WRITE_DATA          = 0x00,
 	I2C_CLK_CTL             = 0x04,
@@ -148,14 +143,15 @@ uint16_t get_address(struct msm_i2c_dev *dev)
 {
 	uint16_t addr;
 
-	if(!dev->msg)
+	if (!dev->msg)
 		return 0;
-	else {
-		addr = dev->msg->addr << 1;
-		if (dev->msg->addr & I2C_M_RD)
-			addr |= 1;
-		return addr;
-	}
+
+	addr = dev->msg->addr << 1;
+
+	if (dev->msg->addr & I2C_M_RD)
+		addr |= 1;
+
+	return addr;
 }
 #endif
 
@@ -338,8 +334,9 @@ msm_i2c_poll_notbusy(struct msm_i2c_dev *dev)
 			if(status & I2C_STATUS_BUS_MASTER)
 				writel(I2C_WRITE_DATA_LAST_BYTE, dev->base + I2C_WRITE_DATA);
 			readl(dev->base + I2C_READ_DATA);
-		} else if (!(status & I2C_STATUS_BUS_ACTIVE))
+		} else if (!(status & I2C_STATUS_BUS_ACTIVE)) {
 			return 0;
+		}
 		if (retries++ > 1000)
 			udelay(100);
 	}
@@ -379,6 +376,8 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev, struct i2c_adapter *adap)
 
 #if defined (CONFIG_MACH_ACER_A1)
 	if (status == 0x2100) {
+		dev_warn(dev->dev, "%s: [bug #20] I2C_STATUS = 0x%x\n",
+							__func__, status);
 		dev->pdata->msm_i2c_config_gpio(adap->nr, 0);
 		mdelay(1);
 		dev->pdata->msm_i2c_config_gpio(adap->nr, 1);
@@ -483,10 +482,6 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 
 	del_timer_sync(&dev->pwr_timer);
 
-#if defined (CONFIG_MACH_ACER_A1)
-	while(atomic_read(&during_suspend))
-		msleep(1);
-#endif
 	mutex_lock(&dev->mlock);
 	if (dev->suspended) {
 		mutex_unlock(&dev->mlock);
@@ -501,10 +496,6 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	/* Don't allow power collapse until we release remote spinlock */
 	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
 					dev->pdata->pm_lat);
-
-#if defined (CONFIG_MACH_ACER_A1)
-	atomic_set(&finished, 0);
-#endif
 
 	if (dev->pdata->rmutex) {
 		/*
@@ -548,11 +539,12 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			if (ret)
 				ret = msm_i2c_recover_bus_busy(dev, adap);
 				if (ret) {
-#if defined (CONFIG_MACH_ACER_A1)
-				        atomic_set(&finished, 1);
-				        pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY,
-				                "msm_i2c", 20001);
+#ifdef CONFIG_MACH_ACER_A1
+					pm_qos_update_requirement(
+							PM_QOS_CPU_DMA_LATENCY,
+							"msm_i2c", 20001);
 #endif
+
 					dev_err(dev->dev,
 						"Error waiting for notbusy\n");
 					goto out_err;
@@ -685,9 +677,10 @@ wait_for_int:
 	if (check_busy) {
 		ret = msm_i2c_poll_notbusy(dev);
 		if (ret)
+			dev_warn(dev->dev, "%s: [bug #20] trying to recover\n",
+					__func__);
 			ret = msm_i2c_recover_bus_busy(dev, adap);
 			if (ret) {
-			        atomic_set(&finished, 1);
 			        pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY,
 			                "msm_i2c", 20001);
 				dev_err(dev->dev,
@@ -716,16 +709,15 @@ wait_for_int:
 		else
 			remote_mutex_unlock(&dev->r_lock);
 	}
-#if defined (CONFIG_MACH_ACER_A1)
-	mutex_unlock(&dev->mlock);
-	atomic_set(&finished, 1);
-	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c", 20001);
+#ifdef CONFIG_MACH_ACER_A1
+	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
+					20001);
 #else
 	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
 					PM_QOS_DEFAULT_VALUE);
+#endif
 	mod_timer(&dev->pwr_timer, (jiffies + 3*HZ));
 	mutex_unlock(&dev->mlock);
-#endif
 	return ret;
 }
 
@@ -938,11 +930,6 @@ static int msm_i2c_suspend(struct platform_device *pdev, pm_message_t state)
 	/* Wait until current transaction finishes
 	 * Make sure remote lock is released before we suspend
 	 */
-#if defined (CONFIG_MACH_ACER_A1)
-	atomic_set(&during_suspend, 1);
-	while(!atomic_read(&finished))
-		msleep(1);
-#endif
 	if (dev) {
 		/* Grab mutex to ensure ongoing transaction is over */
 		mutex_lock(&dev->mlock);
@@ -961,9 +948,6 @@ static int msm_i2c_resume(struct platform_device *pdev)
 	struct msm_i2c_dev *dev = platform_get_drvdata(pdev);
 	dev->suspended = 0;
 
-#if defined (CONFIG_MACH_ACER_A1)
-	atomic_set(&during_suspend, 0);
-#endif
 	return 0;
 }
 
