@@ -257,7 +257,6 @@ static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 {
 #ifdef CONFIG_MACH_ACER_A1
 	acer_charger_type_t charger_type = ACER_CHARGER_TYPE_USB;
-	enum chg_type res;
 
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS) {
 		charger_type = ACER_CHARGER_TYPE_AC;
@@ -273,13 +272,9 @@ static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 	acer_smem_set_charger_type(charger_type);
 
 	if (charger_type == ACER_CHARGER_TYPE_AC)
-		res = USB_CHG_TYPE__WALLCHARGER;
-	else if (charger_type == ACER_CHARGER_TYPE_USB)
-		res = USB_CHG_TYPE__SDP;
+		return USB_CHG_TYPE__WALLCHARGER;
 	else
-		res = USB_CHG_TYPE__INVALID;
-
-	return res;
+		return USB_CHG_TYPE__SDP;
 #else
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS)
 		return USB_CHG_TYPE__WALLCHARGER;
