@@ -1,8 +1,13 @@
-Kernel version 2.6.32.9 for Acer Liquid E
-=========================================
+2.6.32.9 Kernel for Acer A1 (Liquid, S100)
+==========================================
 
 Based on [froyo_almond codeaurora][1] kernel branch snapshot as of
 commit `5bfad4e19237da65af877d376727b2bef90b0950`.
+
+Default configuration is in `arch/arm/configs/salsa_defconfig`.
+
+Pre-built images based on Acer_LiquidE_4.008.08_EMEA_VFIT are available
+[here][4].
 
 See [froyo_almond on Acer Liquid E][2] blog post for more information.
 This kernel will boot with stock Acer 2.2 userspace but will fail to
@@ -10,12 +15,7 @@ bring the Android UI - you will need updated lights.salsa, vold and
 libaudio, libaudiopolicy, libacer_acoustic.so, TPA2018.csv, and keyboard
 configuration from [Acer A1 device tree][3]. You will also
 need libmedia, libmedia_jni.so, libaudioflinger.so from froyo_almond
-codeaurora tree.
-
-Default configuration is in `arch/arm/configs/salsa_defconfig`.
-
-Pre-built images based on Acer_LiquidE_4.008.08_EMEA_VFIT are available
-[here][4].
+codeaurora tree or from the pre-built images.
 
 Upstream patches cherry-picked:
 
