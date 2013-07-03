@@ -33,7 +33,7 @@ struct acer_smem_dbg_map {
 	const char *value;
 };
 
-
+/* Map enum value to string representation */
 static int acer_smem_dbg_map_id2str(char *buf, size_t buf_len,
 				    struct acer_smem_dbg_map *dbg_map,
 				    int dbg_map_size, int id)
@@ -56,6 +56,7 @@ static int acer_smem_dbg_map_id2str(char *buf, size_t buf_len,
 	return 0;
 }
 
+/* Send string value to userspace */
 static ssize_t acer_smem_dbg_string_read(struct file *filp, char __user *buffer,
 					 size_t count, loff_t *ppos,
 					 struct acer_smem_dbg_map *dbg_map,
@@ -72,6 +73,7 @@ static ssize_t acer_smem_dbg_string_read(struct file *filp, char __user *buffer,
 	return simple_read_from_buffer(buffer, count, ppos, buf, strlen(buf));
 }
 
+/* AMSS Boot Mode */
 static struct acer_smem_dbg_map acer_amss_boot_modes[] = {
 	ACER_SMEM_DBG_VALUE(ACER_AMSS_BOOT_IN_NORMAL),
 	ACER_SMEM_DBG_VALUE(ACER_AMSS_BOOT_IN_AMSS_FTM),
@@ -95,6 +97,7 @@ static ssize_t acer_smem_dbg_amss_boot_mode_read(struct file *filp,
 					 acer_smem->amss_boot_mode);
 }
 
+/* AMSS UART Log */
 static struct acer_smem_dbg_map acer_uart_log_switch_states[] = {
 	ACER_SMEM_DBG_VALUE(ACER_UART_LOG_TO_UART1),
 	ACER_SMEM_DBG_VALUE(ACER_UART_LOG_TO_UART3),
@@ -111,6 +114,33 @@ static ssize_t acer_smem_dbg_uart_log_switch_read(struct file *filp,
 					 acer_smem->uart_log_switch);
 }
 
+static ssize_t acer_smem_dbg_uart_log_switch_write(struct file *filp,
+				const char __user *buffer, size_t size,
+								loff_t *ppos)
+{
+	int i;
+	struct acer_smem_dbg_map *value = NULL;
+
+	if (*ppos != 0)
+		return -EIO;
+
+	for (i = 0; i < ARRAY_SIZE(acer_uart_log_switch_states); i++) {
+		if (!strncmp(buffer, acer_uart_log_switch_states[i].value,
+				strlen(acer_uart_log_switch_states[i].value))) {
+			value = &acer_uart_log_switch_states[i];
+			break;
+		}
+	}
+
+	if (value == NULL || value->id == ACER_UART_LOG_INVALID)
+		return -EINVAL;
+
+	acer_smem->uart_log_switch = value->id;
+
+	return size;
+}
+
+/* Acer Battery Temperature info */
 static struct acer_smem_dbg_map acer_batt_temp_info_states[] = {
 	ACER_SMEM_DBG_VALUE(ACER_BATT_TEMP_OK),
 	ACER_SMEM_DBG_VALUE(ACER_BATT_TEMP_ERROR_LV0),
@@ -129,6 +159,7 @@ static ssize_t acer_smem_dbg_batt_temp_info_read(struct file *filp,
 					 acer_smem->batt_temp_info);
 }
 
+/* Acer Charger Type */
 static struct acer_smem_dbg_map acer_charger_types[] = {
 	ACER_SMEM_DBG_VALUE(ACER_CHARGER_TYPE_AC),
 	ACER_SMEM_DBG_VALUE(ACER_CHARGER_TYPE_USB),
@@ -145,6 +176,7 @@ static ssize_t acer_smem_dbg_charger_type_read(struct file *filp,
 					 acer_smem->charger_type);
 }
 
+/* Acer Bootmode Info */
 static ssize_t acer_smem_dbg_bootmode_info_read(struct file *filp,
 				char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -158,6 +190,7 @@ static ssize_t acer_smem_dbg_bootmode_info_read(struct file *filp,
 	return simple_read_from_buffer(buffer, count, ppos, buf, strlen(buf));
 }
 
+/* Acer AMSS Software Version */
 static ssize_t acer_smem_dbg_amss_sw_version_read(struct file *filp,
 				char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -182,6 +215,7 @@ static struct acer_smem_dbg_map acer_hw_versions[] = {
 	ACER_SMEM_DBG_VALUE(ACER_HW_VERSION_INVALID),
 };
 
+/* Acer Hardware Revision */
 static ssize_t acer_smem_dbg_hw_version_read(struct file *filp,
 				char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -191,6 +225,7 @@ static ssize_t acer_smem_dbg_hw_version_read(struct file *filp,
 					 acer_smem->hw_version);
 }
 
+/* Acer Battery Capacity (looks unused) */
 static ssize_t acer_smem_dbg_batt_capacity_read(struct file *dilp,
 				char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -203,6 +238,7 @@ static ssize_t acer_smem_dbg_batt_capacity_read(struct file *dilp,
 	return simple_read_from_buffer(buffer, count, ppos, buf, strlen(buf));
 }
 
+/* Acer Factory Serial Number */
 static ssize_t acer_smem_dbg_factory_sn_read(struct file *filp,
 				char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -243,6 +279,7 @@ static ssize_t acer_smem_dbg_factory_sn_read(struct file *filp,
 	return simple_read_from_buffer(buffer, count, ppos, buf, strlen(buf));
 }
 
+/* Acer OS Power State */
 static struct acer_smem_dbg_map acer_os_pwr_states[] = {
 	ACER_SMEM_DBG_VALUE(ACER_OS_NORMAL_MODE),
 	ACER_SMEM_DBG_VALUE(ACER_OS_IDLE_MODE),
@@ -259,6 +296,7 @@ static ssize_t acer_smem_dbg_os_pwr_state_read(struct file *filp,
 					 acer_smem->os_pwr_state);
 }
 
+/* Acer OS Software Version */
 static ssize_t acer_smem_dbg_os_sw_version_read(struct file *filp,
 				char __user *buffer, size_t count, loff_t *ppos)
 {
@@ -271,23 +309,25 @@ static ssize_t acer_smem_dbg_os_sw_version_read(struct file *filp,
 	return simple_read_from_buffer(buffer, count, ppos, buf, strlen(buf));
 }
 
-#define ACER_SMEM_DBG_ATTR(x, y) {#x, { .read = y }}
+#define ACER_SMEM_DBG_ATTR_RO(x, r) {#x, { .read = r }}
+#define ACER_SMEM_DBG_ATTR_RW(x, r, w) {#x, { .read = r, .write = w }}
 
 static struct {
 	const char* name;
 	const struct file_operations fops;
 } acer_smem_dbg_attrs[] = {
-	ACER_SMEM_DBG_ATTR(amss_boot_mode, acer_smem_dbg_amss_boot_mode_read),
-	ACER_SMEM_DBG_ATTR(uart_log_switch, acer_smem_dbg_uart_log_switch_read),
-	ACER_SMEM_DBG_ATTR(batt_temp_info, acer_smem_dbg_batt_temp_info_read),
-	ACER_SMEM_DBG_ATTR(charger_type, acer_smem_dbg_charger_type_read),
-	ACER_SMEM_DBG_ATTR(bootmode_info, acer_smem_dbg_bootmode_info_read),
-	ACER_SMEM_DBG_ATTR(amss_sw_version, acer_smem_dbg_amss_sw_version_read),
-	ACER_SMEM_DBG_ATTR(hw_version, acer_smem_dbg_hw_version_read),
-	ACER_SMEM_DBG_ATTR(batt_capacity, acer_smem_dbg_batt_capacity_read),
-	ACER_SMEM_DBG_ATTR(factory_sn, acer_smem_dbg_factory_sn_read),
-	ACER_SMEM_DBG_ATTR(os_pwr_state, acer_smem_dbg_os_pwr_state_read),
-	ACER_SMEM_DBG_ATTR(os_sw_version, acer_smem_dbg_os_sw_version_read),
+	ACER_SMEM_DBG_ATTR_RO(amss_boot_mode, acer_smem_dbg_amss_boot_mode_read),
+	ACER_SMEM_DBG_ATTR_RW(uart_log_switch, acer_smem_dbg_uart_log_switch_read,
+					acer_smem_dbg_uart_log_switch_write),
+	ACER_SMEM_DBG_ATTR_RO(batt_temp_info, acer_smem_dbg_batt_temp_info_read),
+	ACER_SMEM_DBG_ATTR_RO(charger_type, acer_smem_dbg_charger_type_read),
+	ACER_SMEM_DBG_ATTR_RO(bootmode_info, acer_smem_dbg_bootmode_info_read),
+	ACER_SMEM_DBG_ATTR_RO(amss_sw_version, acer_smem_dbg_amss_sw_version_read),
+	ACER_SMEM_DBG_ATTR_RO(hw_version, acer_smem_dbg_hw_version_read),
+	ACER_SMEM_DBG_ATTR_RO(batt_capacity, acer_smem_dbg_batt_capacity_read),
+	ACER_SMEM_DBG_ATTR_RO(factory_sn, acer_smem_dbg_factory_sn_read),
+	ACER_SMEM_DBG_ATTR_RO(os_pwr_state, acer_smem_dbg_os_pwr_state_read),
+	ACER_SMEM_DBG_ATTR_RO(os_sw_version, acer_smem_dbg_os_sw_version_read),
 };
 
 #endif // CONFIG_DEBUG_FS
