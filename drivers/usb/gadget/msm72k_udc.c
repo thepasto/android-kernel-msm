@@ -286,10 +286,13 @@ static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 {
 #ifdef CONFIG_MACH_ACER_A1
 	acer_charger_type_t charger_type = ACER_CHARGER_TYPE_USB;
-	enum chg_type res;
 
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS) {
 		charger_type = ACER_CHARGER_TYPE_AC;
+#if 0
+/* FIXME: Commented out to support serial debugging via USB3.0 cable
+ * https://rtg.in.ua/2013/07/01/serial-debug-on-acer-a1/
+ */
 	} else {
 		/* HW 0.5 ID pin always low, only USB charging */
 		if (acer_hw_version != ACER_HW_VERSION_0_5) {
@@ -297,18 +300,16 @@ static inline enum chg_type usb_get_chg_type(struct usb_info *ui)
 				/* ID Pin Low */
 				charger_type = ACER_CHARGER_TYPE_AC;
 		}
+#endif
 	}
 
 	acer_smem_set_charger_type(charger_type);
 
 	if (charger_type == ACER_CHARGER_TYPE_AC)
-		res = USB_CHG_TYPE__WALLCHARGER;
-	else if (charger_type == ACER_CHARGER_TYPE_USB)
-		res = USB_CHG_TYPE__SDP;
+		return USB_CHG_TYPE__WALLCHARGER;
 	else
-		res = USB_CHG_TYPE__INVALID;
+		return USB_CHG_TYPE__SDP;
 
-	return res;
 #else
 	if ((readl(USB_PORTSC) & PORTSC_LS) == PORTSC_LS)
 		return USB_CHG_TYPE__WALLCHARGER;
