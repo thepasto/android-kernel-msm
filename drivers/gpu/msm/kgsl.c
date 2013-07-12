@@ -218,9 +218,9 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 				clk_set_min_rate(kgsl_driver.yamato_grp_src_clk,
 					kgsl_driver.clk_freq[KGSL_3D_MIN_FREQ]);
 			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D])
-				pm_qos_update_requirement(
-					PM_QOS_SYSTEM_BUS_FREQ,
-					"kgsl_3d", PM_QOS_DEFAULT_VALUE);
+				pm_qos_update_request(
+					kgsl_driver.yamato_pm_qos_req,
+					PM_QOS_DEFAULT_VALUE);
 			kgsl_driver.power_flags &=
 					~(KGSL_PWRFLAGS_YAMATO_CLK_ON);
 			kgsl_driver.power_flags |= KGSL_PWRFLAGS_YAMATO_CLK_OFF;
@@ -229,8 +229,8 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 	case KGSL_PWRFLAGS_YAMATO_CLK_ON:
 		if (kgsl_driver.power_flags & KGSL_PWRFLAGS_YAMATO_CLK_OFF) {
 			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D])
-				pm_qos_update_requirement(
-					PM_QOS_SYSTEM_BUS_FREQ, "kgsl_3d",
+				pm_qos_update_request(
+					kgsl_driver.yamato_pm_qos_req,
 					kgsl_driver.clk_freq[KGSL_AXI_HIGH_3D]);
 			if (kgsl_driver.clk_freq[KGSL_3D_MAX_FREQ])
 				clk_set_min_rate(kgsl_driver.yamato_grp_src_clk,
@@ -258,9 +258,9 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 					kgsl_driver.clk_freq[KGSL_2D_MIN_FREQ]);
 			}
 			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D])
-				pm_qos_update_requirement(
-					PM_QOS_SYSTEM_BUS_FREQ,
-					"kgsl_2d", PM_QOS_DEFAULT_VALUE);
+				pm_qos_update_request(
+					kgsl_driver.g12_pm_qos_req,
+					PM_QOS_DEFAULT_VALUE);
 			kgsl_driver.power_flags &= ~(KGSL_PWRFLAGS_G12_CLK_ON);
 			kgsl_driver.power_flags |= KGSL_PWRFLAGS_G12_CLK_OFF;
 		}
@@ -268,8 +268,8 @@ int kgsl_pwrctrl(unsigned int pwrflag)
 	case KGSL_PWRFLAGS_G12_CLK_ON:
 		if (kgsl_driver.power_flags & KGSL_PWRFLAGS_G12_CLK_OFF) {
 			if (kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D])
-				pm_qos_update_requirement(
-					PM_QOS_SYSTEM_BUS_FREQ, "kgsl_2d",
+				pm_qos_update_request(
+					kgsl_driver.g12_pm_qos_req,
 					kgsl_driver.clk_freq[KGSL_AXI_HIGH_2D]);
 			if (kgsl_driver.g12_grp_pclk)
 				clk_enable(kgsl_driver.g12_grp_pclk);
@@ -1549,7 +1549,7 @@ static void kgsl_driver_cleanup(void)
 		kgsl_driver.g12_interrupt_num = 0;
 	}
 
-	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_3d");
+	pm_qos_remove_request(kgsl_driver.yamato_pm_qos_req);
 
 	if (kgsl_driver.yamato_grp_pclk) {
 		clk_put(kgsl_driver.yamato_grp_pclk);
@@ -1577,7 +1577,7 @@ static void kgsl_driver_cleanup(void)
 	if (kgsl_driver.g12_grp_clk) {
 		clk_put(kgsl_driver.g12_grp_clk);
 		kgsl_driver.g12_grp_clk = NULL;
-		pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_2d");
+		pm_qos_remove_request(kgsl_driver.g12_pm_qos_req);
 	}
 
 	kgsl_driver.pdev = NULL;
@@ -1686,8 +1686,8 @@ static int __devinit kgsl_platform_probe(struct platform_device *pdev)
 		kgsl_driver.clk_freq[KGSL_3D_MAX_FREQ] = pdata->max_grp3d_freq;
 	}
 
-	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_3d",
-				PM_QOS_DEFAULT_VALUE);
+	kgsl_driver.yamato_pm_qos_req = pm_qos_add_request(
+				PM_QOS_CPU_DMA_LATENCY, PM_QOS_DEFAULT_VALUE);
 
 	/*acquire yamato interrupt */
 	kgsl_driver.yamato_interrupt_num =
@@ -1733,8 +1733,8 @@ static int __devinit kgsl_platform_probe(struct platform_device *pdev)
 		disable_irq(kgsl_driver.g12_interrupt_num);
 
 		/* g12 config */
-		pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, "kgsl_2d",
-				PM_QOS_DEFAULT_VALUE);
+		kgsl_driver.g12_pm_qos_req = pm_qos_add_request(
+				PM_QOS_CPU_DMA_LATENCY, PM_QOS_DEFAULT_VALUE);
 		result = kgsl_g12_config(&kgsl_driver.g12_config, pdev);
 		if (result != 0)
 			goto done;

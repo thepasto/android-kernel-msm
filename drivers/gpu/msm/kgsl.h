@@ -35,6 +35,7 @@
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/mutex.h>
+#include <linux/pm_qos_params.h>
 
 #include <asm/atomic.h>
 
@@ -83,6 +84,10 @@ struct kgsl_driver {
 	struct clk *yamato_grp_clk;
 	struct clk *yamato_grp_src_clk;
 	struct clk *imem_clk;
+
+	struct pm_qos_request_list *g12_pm_qos_req;
+	struct pm_qos_request_list *yamato_pm_qos_req;
+
 	unsigned int power_flags;
 	unsigned int is_suspended;
 	unsigned int clk_freq[KGSL_NUM_FREQ];
