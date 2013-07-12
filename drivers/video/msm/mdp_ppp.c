@@ -1254,6 +1254,7 @@ static int mdp_ppp_verify_req(struct mdp_blit_req *req)
 	return 0;
 }
 
+#ifndef CONFIG_MACH_ACER_A1
 int get_gem_img(struct mdp_img *img, unsigned long *start, unsigned long *len)
 {
 	/* Set len to zero to appropriately error out if
@@ -1262,6 +1263,7 @@ int get_gem_img(struct mdp_img *img, unsigned long *start, unsigned long *len)
 	*len = 0;
 	return kgsl_gem_obj_addr(img->memory_id, (int) img->priv, start, len);
 }
+#endif
 
 int get_img(struct mdp_img *img, struct fb_info *info, unsigned long *start,
 	    unsigned long *len, struct file **pp_file)
@@ -1315,18 +1317,22 @@ int mdp_ppp_blit(struct fb_info *info, struct mdp_blit_req *req)
 		req->dst.format =  mfd->fb_imgType;
 	if (req->src.format == MDP_FB_FORMAT)
 		req->src.format = mfd->fb_imgType;
+#ifndef CONFIG_MACH_ACER_A1
 	if (req->flags & MDP_BLIT_SRC_GEM)
 		get_gem_img(&req->src, &src_start, &src_len);
 	else
+#endif
 		get_img(&req->src, info, &src_start, &src_len, &p_src_file);
 	if (src_len == 0) {
 		printk(KERN_ERR "mdp_ppp: could not retrieve image from "
 		       "memory\n");
 		return -1;
 	}
+#ifndef CONFIG_MACH_ACER_A1
 	if (req->flags & MDP_BLIT_DST_GEM)
 		get_gem_img(&req->dst, &dst_start, &dst_len);
 	else
+#endif
 		get_img(&req->dst, info, &dst_start, &dst_len, &p_dst_file);
 	if (dst_len == 0) {
 		put_img(p_src_file);

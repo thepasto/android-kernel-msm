@@ -126,6 +126,7 @@
 
 #define MSM_PMEM_ADSP_SIZE	0x2A05000
 #define MSM_FB_SIZE		0x2EE000
+#define MSM_GPU_PHYS_SIZE	SZ_2M
 
 #define MSM_SMI_BASE		0x00000000
 
@@ -136,13 +137,16 @@
 #define MSM_RAM_CONSOLE_BASE	(MSM_SMI_BASE + MODEM_SIZE)
 #define MSM_RAM_CONSOLE_SIZE	128 * SZ_1K
 
-#define MSM_PMEM_SMI_BASE	(MSM_SMI_BASE + MODEM_SIZE + MSM_RAM_CONSOLE_SIZE)
+#define MSM_PMEM_SMI_BASE	(MSM_SMI_BASE + MODEM_SIZE \
+						+ MSM_RAM_CONSOLE_SIZE)
 #define MSM_PMEM_SMI_SIZE	0x01D00000
 
-#define MSM_PMEM_SF_BASE	MSM_PMEM_SMI_BASE
+#define MSM_GPU_PHYS_BASE	MSM_PMEM_SMI_BASE
+#define MSM_PMEM_SF_BASE	(MSM_GPU_PHYS_BASE + MSM_GPU_PHYS_SIZE)
 #define MSM_PMEM_SF_SIZE	0x1700000
 #define MSM_PMEM_SMIPOOL_BASE	(MSM_PMEM_SF_BASE + MSM_PMEM_SF_SIZE)
-#define MSM_PMEM_SMIPOOL_SIZE	(MSM_PMEM_SMI_SIZE - MSM_PMEM_SF_SIZE)
+#define MSM_PMEM_SMIPOOL_SIZE	(MSM_PMEM_SMI_SIZE - MSM_GPU_PHYS_SIZE \
+							- MSM_PMEM_SF_SIZE)
 
 #define PMEM_KERNEL_EBI1_SIZE	0x28000
 
@@ -890,51 +894,46 @@ static void __init wlan_init(void)
     }
 }
 
-static struct resource kgsl_3d0_resources[] = {
+static struct resource kgsl_resources[] = {
        {
-		.name  = KGSL_3D0_REG_MEMORY,
+		.name  = "kgsl_reg_memory",
 		.start = 0xA0000000,
 		.end = 0xA001ffff,
 		.flags = IORESOURCE_MEM,
        },
        {
-		.name = KGSL_3D0_IRQ,
+		.name   = "kgsl_phys_memory",
+		.start = MSM_GPU_PHYS_BASE,
+		.end = MSM_GPU_PHYS_BASE + MSM_GPU_PHYS_SIZE - 1,
+		.flags = IORESOURCE_MEM,
+       },
+       {
+		.name = "kgsl_yamato_irq",
 		.start = INT_GRAPHICS,
 		.end = INT_GRAPHICS,
 		.flags = IORESOURCE_IRQ,
        },
 };
-
-static struct kgsl_device_platform_data kgsl_3d0_pdata = {
-	.pwr_data = {
-		.pwrlevel = {
-			{
-				.gpu_freq = 0,
-				.bus_freq = 128000000,
-			},
-		},
-		.init_level = 0,
-		.num_levels = 1,
-		.set_grp_async = NULL,
-		.idle_timeout = HZ/5,
-	},
-	.clk = {
-		.name = {
-			.clk = "grp_clk",
-		},
-	},
-	.imem_clk_name = {
-		.clk = "imem_clk",
-	},
+static struct kgsl_platform_data kgsl_pdata = {
+	.high_axi_3d = 128000, /*Max for 8K*/
+	.max_grp2d_freq = 0,
+	.min_grp2d_freq = 0,
+	.set_grp2d_async = NULL,
+	.max_grp3d_freq = 0,
+	.min_grp3d_freq = 0,
+	.set_grp3d_async = NULL,
+	.imem_clk_name = "imem_clk",
+	.grp3d_clk_name = "grp_clk",
+	.grp2d_clk_name = NULL,
 };
 
-static struct platform_device msm_kgsl_3d0 = {
-       .name = "kgsl-3d0",
-       .id = 0,
-       .num_resources = ARRAY_SIZE(kgsl_3d0_resources),
-       .resource = kgsl_3d0_resources,
+static struct platform_device msm_device_kgsl = {
+       .name = "kgsl",
+       .id = -1,
+       .num_resources = ARRAY_SIZE(kgsl_resources),
+       .resource = kgsl_resources,
 	.dev = {
-		.platform_data = &kgsl_3d0_pdata,
+		.platform_data = &kgsl_pdata,
 	},
 };
 
@@ -1244,7 +1243,7 @@ static struct platform_device *devices[] __initdata = {
 #endif
 	&msm_wifi_power_device,
 	&msm_device_uart3,
-	&msm_kgsl_3d0,
+	&msm_device_kgsl,
 #ifdef CONFIG_MT9P012
 	&msm_camera_sensor_mt9p012,
 #endif
