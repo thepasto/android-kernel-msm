@@ -51,3 +51,5 @@ obj-$(CONFIG_PMIC8058_XOADC) += pmic8058-xoadc.o
 obj-$(CONFIG_PMIC8058_MISC) += pmic8058-misc.o
 obj-$(CONFIG_PMIC8058_BATTALARM) += pmic8058-batt-alarm.o
 obj-$(CONFIG_TZCOM) += tzcom.o
+obj-$(CONFIG_BOSCH_SMB380)	+= smb380.o bma150_driver.o smb380calib.o
+obj-$(CONFIG_SENSORS_ISL29018)  += isl29018.o
