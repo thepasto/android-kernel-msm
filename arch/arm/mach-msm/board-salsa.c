@@ -979,6 +979,12 @@ static struct led_info tca6507_leds[] = {
 	[2] = {
 		.name = "battery",
 	},
+	/* these can become GPIOs if left unitialized */
+	[3] = { .name = NULL },
+	[4] = { .name = NULL },
+	[5] = { .name = NULL },
+	[6] = { .name = NULL },
+	[7] = { .name = NULL },
 };
 
 static struct tca6507_platform_data tca6507_leds_pdata = {
