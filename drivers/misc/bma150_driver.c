@@ -719,9 +719,7 @@ static void bma150_work_func(struct work_struct *work)
 
 static irqreturn_t bma150_interrupt(int irq, void *dev_id)
 {
-	disable_irq(irq);
 	schedule_work(&bma150_data->work);
-	enable_irq(irq);
 	return IRQ_HANDLED;
 }
 
@@ -783,8 +781,9 @@ static int bma150_probe(struct i2c_client *client, const struct i2c_device_id *i
 		res = -EFAULT;
 		goto out_unreg_gpio;
 	}
-	res = request_irq(client->irq, bma150_interrupt, IRQF_TRIGGER_FALLING,
-				  BMA150_DEVICE_NAME, bma150_data);
+	res = request_irq(client->irq, bma150_interrupt,
+				IRQF_TRIGGER_FALLING | IRQF_DISABLED,
+				BMA150_DEVICE_NAME, bma150_data);
 	if (res < 0) {
 		pr_err("[BMA150] request_irq error! error code[%d]\n", res);
 		goto out_unreg_gpio;
