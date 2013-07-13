@@ -52,7 +52,6 @@ config ARCH_QSD8X50
 	select MSM_VIC
 	select CPU_V7
 	select MSM_REMOTE_SPINLOCK_LDREX
-	select EMULATE_DOMAIN_MANAGER_V7
 	select MSM_GPIOMUX
 	select MSM_DALRPC
 
@@ -126,7 +125,6 @@ choice
 	default MSM_SOC_REV_NONE
 config MSM_SOC_REV_NONE
 	bool "N/A"
-	select EMULATE_DOMAIN_MANAGER_V7 if ARCH_QSD8X50
 	select VERIFY_PERMISSION_FAULT if ARCH_QSD8X50
 config MSM_SOC_REV_A
 	bool "Rev. A"
