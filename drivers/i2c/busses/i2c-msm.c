@@ -141,6 +141,23 @@ dump_status(uint32_t status)
 }
 #endif
 
+#if defined (CONFIG_MACH_ACER_A1)
+uint16_t get_address(struct msm_i2c_dev *dev)
+{
+	uint16_t addr;
+
+	if (!dev->msg)
+		return 0;
+
+	addr = dev->msg->addr << 1;
+
+	if (dev->msg->addr & I2C_M_RD)
+		addr |= 1;
+
+	return addr;
+}
+#endif
+
 static irqreturn_t
 msm_i2c_interrupt(int irq, void *devid)
 {
@@ -152,9 +169,20 @@ msm_i2c_interrupt(int irq, void *devid)
 	dump_status(status);
 #endif
 
+#ifdef CONFIG_MACH_ACER_A1
+	pm_qos_update_request(dev->pm_qos_req, 501);
+#endif
+
 	spin_lock(&dev->lock);
+#ifdef CONFIG_MACH_ACER_A1
+	if ((!dev->msg) || (!dev->complete)) {
+		dev_err(dev->dev,
+			"(0x%x) IRQ but nothing to do!, status %x\n",
+			get_address(dev), status);
+#else
 	if (!dev->msg) {
 		printk(KERN_ERR "%s: IRQ but nothing to do!\n", __func__);
+#endif
 		spin_unlock(&dev->lock);
 		return IRQ_HANDLED;
 	}
@@ -196,11 +224,23 @@ msm_i2c_interrupt(int irq, void *devid)
 				/* Now that extra read-cycle-clocks aren't
 				 * generated, this becomes error condition
 				 */
+#ifdef CONFIG_MACH_ACER_A1
+				if (dev->flush_cnt & 1) {
+					writel(I2C_WRITE_DATA_LAST_BYTE,
+						dev->base + I2C_WRITE_DATA);
+				}
+				readl(dev->base + I2C_READ_DATA);
+				dev_err(dev->dev,
+					"(0x%x) extra read-cycle, status - %x\n",
+					get_address(dev), status);
+				dev->flush_cnt++;
+#else
 				dev_err(dev->dev,
 					"read did not stop, status - %x\n",
 					status);
 				err = -EIO;
 				goto out_err;
+#endif
 			}
 		} else if (dev->msg->len == 1 && dev->rd_acked == 0 &&
 				((status & I2C_STATUS_RX_DATA_STATE) ==
@@ -252,6 +292,9 @@ msm_i2c_interrupt(int irq, void *devid)
 	return IRQ_HANDLED;
 
  out_err:
+#if defined (CONFIG_MACH_ACER_A1)
+	dev_err(dev->dev, "(0x%x) error, status %x\n", get_address(dev), status);
+#endif
 	dev->err = err;
  out_complete:
 	complete(dev->complete);
@@ -275,6 +318,33 @@ msm_i2c_poll_writeready(struct msm_i2c_dev *dev)
 	return -ETIMEDOUT;
 }
 
+#if defined (CONFIG_MACH_ACER_A1)
+static int
+msm_i2c_poll_notbusy(struct msm_i2c_dev *dev)
+{
+	uint32_t retries = 0;
+	uint32_t status;
+
+	while (retries != 2000) {
+		status = readl(dev->base + I2C_STATUS);
+
+		if (status & I2C_STATUS_RD_BUFFER_FULL) {
+			// if i2c controller not master
+			// I2C_WRITE_DATA_LAST_BYTE can't write to Reg I2C_WRITE_DATA again
+			if(status & I2C_STATUS_BUS_MASTER)
+				writel(I2C_WRITE_DATA_LAST_BYTE, dev->base + I2C_WRITE_DATA);
+			readl(dev->base + I2C_READ_DATA);
+		} else if (!(status & I2C_STATUS_BUS_ACTIVE)) {
+			return 0;
+		}
+		if (retries++ > 1000)
+			udelay(100);
+	}
+	dev_err(dev->dev, "(0x%x) Error waiting for notbusy status : 0x%x\n",
+		get_address(dev), status);
+	return -ETIMEDOUT;
+}
+#else
 static int
 msm_i2c_poll_notbusy(struct msm_i2c_dev *dev)
 {
@@ -290,6 +360,7 @@ msm_i2c_poll_notbusy(struct msm_i2c_dev *dev)
 	}
 	return -ETIMEDOUT;
 }
+#endif
 
 static int
 msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev, struct i2c_adapter *adap)
@@ -302,6 +373,16 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev, struct i2c_adapter *adap)
 
 	if (!(status & (I2C_STATUS_BUS_ACTIVE | I2C_STATUS_WR_BUFFER_FULL)))
 		return 0;
+
+#if defined (CONFIG_MACH_ACER_A1)
+	if (status == 0x2100) {
+		dev_warn(dev->dev, "%s: [bug #20] I2C_STATUS = 0x%x\n",
+							__func__, status);
+		dev->pdata->msm_i2c_config_gpio(adap->nr, 0);
+		mdelay(1);
+		dev->pdata->msm_i2c_config_gpio(adap->nr, 1);
+	}
+#endif
 
 	dev->pdata->msm_i2c_config_gpio(adap->nr, 0);
 	/* Even adapter is primary and Odd adapter is AUX */
@@ -421,6 +502,11 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			if (ret)
 				ret = msm_i2c_recover_bus_busy(dev, adap);
 				if (ret) {
+#ifdef CONFIG_MACH_ACER_A1
+					pm_qos_update_request(
+							dev->pm_qos_req,
+							20001);
+#endif
 					dev_err(dev->dev,
 						"Error waiting for notbusy\n");
 					goto out_err;
@@ -462,7 +548,11 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 			 * empty and the slave sending ACK to ensure I2C
 			 * controller goes in receive mode to receive data.
 			 */
+#ifdef CONFIG_MACH_ACER_A1
+			while (retries != 5000) {
+#else
 			while (retries != 2000) {
+#endif
 				uint32_t status = readl(dev->base + I2C_STATUS);
 
 					if ((status & I2C_STATUS_RX_DATA_STATE)
@@ -470,7 +560,11 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 						break;
 				retries++;
 			}
+#ifdef CONFIG_MACH_ACER_A1
+			if (retries >= 5000) {
+#else
 			if (retries >= 2000) {
+#endif
 				dev->rd_acked = 0;
 				spin_unlock_irqrestore(&dev->lock, flags);
 				/* 1-byte-reads from slow devices in interrupt
@@ -500,6 +594,21 @@ wait_for_int:
 
 		timeout = wait_for_completion_timeout(&complete, HZ);
 		if (!timeout) {
+#ifdef CONFIG_MACH_ACER_A1
+			uint32_t t_status;
+			dev_err(dev->dev, "(0x%x) Transaction timed out\n",
+				get_address(dev));
+			t_status = readl(dev->base + I2C_STATUS);
+			dev_err(dev->dev, "(0x%x) timed out status = 0x%x\n",
+				get_address(dev), t_status);
+			if (t_status & I2C_STATUS_RD_BUFFER_FULL)
+				readl(dev->base + I2C_READ_DATA);
+			if (t_status) {
+				writel(I2C_WRITE_DATA_LAST_BYTE,
+					dev->base + I2C_WRITE_DATA);
+				msleep(100);
+			}
+#else
 			dev_err(dev->dev, "Transaction timed out\n");
 			writel(I2C_WRITE_DATA_LAST_BYTE,
 				dev->base + I2C_WRITE_DATA);
@@ -507,6 +616,7 @@ wait_for_int:
 			/* FLUSH */
 			readl(dev->base + I2C_READ_DATA);
 			readl(dev->base + I2C_STATUS);
+#endif
 			ret = -ETIMEDOUT;
 			goto out_err;
 		}
@@ -525,6 +635,24 @@ wait_for_int:
 		rem--;
 	}
 
+#ifdef CONFIG_MACH_ACER_A1
+	if (check_busy) {
+		ret = msm_i2c_poll_notbusy(dev);
+		if (ret)
+			dev_warn(dev->dev, "%s: [bug #20] trying to recover\n",
+					__func__);
+			ret = msm_i2c_recover_bus_busy(dev, adap);
+			if (ret) {
+			        pm_qos_update_request(dev->pm_qos_req,
+						      20001);
+				dev_err(dev->dev,
+					"Error waiting for notbusy\n");
+				goto out_err;
+			}
+		check_busy = 0;
+	}
+#endif
+
 	ret = num;
  out_err:
 	spin_lock_irqsave(&dev->lock, flags);
@@ -539,8 +667,13 @@ wait_for_int:
 	disable_irq(dev->irq);
 	if (dev->pdata->rmutex)
 		remote_mutex_unlock(&dev->r_lock);
+#ifdef CONFIG_MACH_ACER_A1
+	pm_qos_update_request(dev->pm_qos_req,
+			      20001);
+#else
 	pm_qos_update_request(dev->pm_qos_req,
 			      PM_QOS_DEFAULT_VALUE);
+#endif
 	mod_timer(&dev->pwr_timer, (jiffies + 3*HZ));
 	mutex_unlock(&dev->mlock);
 	return ret;
